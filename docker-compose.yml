@@ -1,0 +1,90 @@
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    restart: always
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: abc123
+      POSTGRES_DB: datalakehouse
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  spark:
+    image: apache/spark:3.5.0
+    container_name: spark
+    command: >
+      bash -c "
+      /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+      --host 0.0.0.0 --port 7077 --webui-port 8080
+      "
+    hostname: spark
+    ports:
+      - "7077:7077"   # Spark master port
+      - "8080:8080"   # Web UI
+    volumes:
+      - ./app:/opt/spark-apps
+      - ./data:/opt/spark-data
+
+  spark-worker:
+    image: apache/spark:3.5.0
+    container_name: spark-worker
+    command: >
+      bash -c "
+      /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark:7077
+      "
+    depends_on:
+      - spark
+    environment:
+      - SPARK_WORKER_CORES=2
+      - SPARK_WORKER_MEMORY=2G
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./app:/opt/spark-apps
+      - ./data:/opt/spark-data
+
+  minio:
+    image: minio/minio
+    container_name: minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+
+  mc:
+     image: minio/mc
+     container_name: mc
+     depends_on:
+       - minio
+     entrypoint: >
+       /bin/sh -c "
+         until mc alias set myminio http://minio:9000 minioadmin minioadmin; do sleep 3; done;
+         mc mb -p myminio/raw;
+         mc policy set public myminio/raw;
+         exit 0;
+       "
+
+volumes:
+  pgdata:
+  minio_data:
+
+
+
