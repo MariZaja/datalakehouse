@@ -77,8 +77,12 @@ services:
      entrypoint: >
        /bin/sh -c "
          until mc alias set myminio http://minio:9000 minioadmin minioadmin; do sleep 3; done;
-         mc mb -p myminio/raw;
-         mc policy set public myminio/raw;
+         mc mb -p myminio/bronze;
+         mc policy set public myminio/bronze;
+         mc mb -p myminio/silver;
+         mc policy set public myminio/silver;
+         mc mb -p myminio/gold;
+         mc policy set public myminio/gold;
          exit 0;
        "
 
