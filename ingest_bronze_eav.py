@@ -3,50 +3,16 @@ import uuid
 from datetime import datetime
 
 from dotenv import load_dotenv
-from minio import Minio
-from pyspark.sql import SparkSession
 from pyspark.sql.functions import current_timestamp
+import config
 
 load_dotenv()
 # Lokalna ścieżka do danych źródłowych
 LOCAL_EAV_PATH = os.getenv("LOCAL_EAV_PATH")
-
-# MinIO / S3
-MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT")
-MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY")
-MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY")
 BUCKET = os.getenv("BUCKET_BRONZE")
 BASE_PATH = os.getenv("BASE_PATH_EAV")
 
-minio_client = Minio(
-    MINIO_ENDPOINT,
-    access_key=MINIO_ACCESS_KEY,
-    secret_key=MINIO_SECRET_KEY,
-    secure=False
-)
-
-spark = (
-    SparkSession.builder
-    .appName("bronze-eav-ingest")
-    .master("local[*]")
-    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-    .config(
-        "spark.jars.packages",
-        "io.delta:delta-spark_2.12:3.2.0,"
-        "org.apache.hadoop:hadoop-aws:3.3.4,"
-        "com.amazonaws:aws-java-sdk-bundle:1.12.316")
-
-    .config("spark.hadoop.fs.s3a.endpoint", f"http://{MINIO_ENDPOINT}")
-    .config("spark.hadoop.fs.s3a.access.key", MINIO_ACCESS_KEY)
-    .config("spark.hadoop.fs.s3a.secret.key", MINIO_SECRET_KEY)
-    .config("spark.hadoop.fs.s3a.path.style.access", "true")
-    .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
-    .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false")
-    .config("spark.hadoop.io.native.lib.available", "false")
-
-    .getOrCreate()
-)
+minio_client, spark = config.config()
 
 records = []
 
