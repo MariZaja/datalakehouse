@@ -50,17 +50,17 @@ spark = (
 
 records = []
 
+modality_map = {
+    "Audio": "audio",
+    "Video": "video",
+    "EEG": "eeg"
+}
+
 for item in os.listdir(LOCAL_EAV_PATH):
     subject_path = os.path.join(LOCAL_EAV_PATH, item)
 
     if item.startswith("subject") and os.path.isdir(subject_path):
         subject_id = item
-
-        modality_map = {
-            "Audio": "audio",
-            "Video": "video",
-            "EEG": "eeg"
-        }
 
         for src_modality, dst_modality in modality_map.items():
             src_dir = os.path.join(subject_path, src_modality)
@@ -75,19 +75,17 @@ for item in os.listdir(LOCAL_EAV_PATH):
 
                 s3_path = (
                     f"{BASE_PATH}/files/"
-                    f"subject={subject_id}/"
+                    f"entity={subject_id}/"
                     f"modality={dst_modality}/"
                     f"{file_name}"
                 )
 
-                # Upload binary file to BRONZE
                 minio_client.fput_object(
                     BUCKET,
                     s3_path,
                     local_file
                 )
 
-                # Collect metadata record
                 records.append((
                     str(uuid.uuid4()),
                     "EAV",
@@ -95,7 +93,7 @@ for item in os.listdir(LOCAL_EAV_PATH):
                     dst_modality,
                     f"s3://{BUCKET}/{s3_path}",
                     file_name,
-                    datetime.now()
+                    datetime.utcnow()
                 ))
 
 df = spark.createDataFrame(
@@ -103,7 +101,7 @@ df = spark.createDataFrame(
     [
         "file_id",
         "dataset",
-        "subject_id",
+        "entity_id",
         "modality",
         "file_path",
         "file_name",
@@ -117,7 +115,7 @@ df = spark.createDataFrame(
     .write
     .format("delta")
     .mode("append")
-    .partitionBy("subject_id", "modality")
+    .partitionBy("entity_id", "modality")
     .save(f"s3a://{BUCKET}/{BASE_PATH}/delta/eav_files_metadata")
 )
 
