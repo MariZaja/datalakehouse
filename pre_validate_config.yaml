@@ -1,0 +1,41 @@
+bucket: bronze
+
+datasets:
+
+  eav:
+    base_prefix: eav
+    files_prefix: eav/files/
+    allowed_sub_prefixes: [files, auxiliary, delta]
+    expected_prefixes:
+      - eav/files/
+      - eav/auxiliary/
+      - eav/delta/
+    files_table: eav/delta/eav_files_metadata
+    aux_table:   eav/delta/auxiliary_metadata
+    entity_id_column: entity_id
+    entity_count_min: 1
+    modality_column: modality
+    expected_modalities: [audio, video, eeg]
+    files_expected_columns:
+      [file_id, dataset, entity_id, modality, file_path, file_name, ingestion_time, ingest_ts]
+    aux_expected_columns:
+      [record_id, dataset, category, source_path, file_name, related_entity, ingestion_time, ingest_ts]
+
+  kemocon:
+    base_prefix: k-emocon
+    files_prefix: k-emocon/files/
+    allowed_sub_prefixes: [files, auxiliary, delta]
+    expected_prefixes:
+      - k-emocon/files/
+      - k-emocon/auxiliary/
+      - k-emocon/delta/
+    files_table: k-emocon/delta/k_emocon_files_metadata
+    aux_table:   k-emocon/delta/auxiliary_metadata
+    entity_id_column: entity_id
+    entity_count_min: 1
+    modality_column: modality
+    expected_modalities: [audio, video, eeg, biosignal]
+    files_expected_columns:
+      [file_id, dataset, entity_id, modality, file_path, file_name, ingestion_time, ingest_ts]
+    aux_expected_columns:
+      [record_id, dataset, category, source_path, file_name, related_entity, ingestion_time, ingest_ts]
