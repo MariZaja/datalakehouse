@@ -2,3 +2,4 @@ data
 app
 venv
 .env
+__pycache__
