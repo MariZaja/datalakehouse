@@ -214,7 +214,7 @@ def save_report(report: Dict[str, Any], output_dir: str) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Pre-Validation Gate — Bronze layer.")
-    parser.add_argument("--config", default="pre_validate_config.yaml", help="Path to YAML config.")
+    parser.add_argument("--config", default="pipeline_config.yaml", help="Path to YAML config.")
     parser.add_argument("--output", default=".", help="Directory for JSON report.")
     return parser.parse_args()
 

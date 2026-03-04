@@ -1,4 +1,5 @@
 bucket: bronze
+bucket_silver: silver
 
 datasets:
 
@@ -20,6 +21,10 @@ datasets:
       [file_id, dataset, entity_id, modality, file_path, file_name, ingestion_time, ingest_ts]
     aux_expected_columns:
       [record_id, dataset, category, source_path, file_name, related_entity, ingestion_time, ingest_ts]
+    # Silver — entity
+    id_pattern: "^subject(\\d+)$"
+    silver_base_prefix: 01_entity_resolution/eav
+    silver_files_table: 01_entity_resolution/eav/delta/eav_files_metadata
 
   kemocon:
     base_prefix: k-emocon
@@ -39,3 +44,8 @@ datasets:
       [file_id, dataset, entity_id, modality, file_path, file_name, ingestion_time, ingest_ts]
     aux_expected_columns:
       [record_id, dataset, category, source_path, file_name, related_entity, ingestion_time, ingest_ts]
+    # Silver — entity
+    id_pattern: "^p?(\\d+)$"
+    dyadic_separator: "_"
+    silver_base_prefix: 01_entity_resolution/k-emocon
+    silver_files_table: 01_entity_resolution/k-emocon/delta/k_emocon_files_metadata
