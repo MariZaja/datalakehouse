@@ -75,4 +75,4 @@ df = spark.createDataFrame(
     .save(f"s3a://{BUCKET}/{BASE_PATH}/delta/auxiliary_metadata")
 )
 
-print("✅ K-EmoCon auxiliary metadata ingested to BRONZE.")
+print("K-EmoCon auxiliary metadata ingested to BRONZE.")

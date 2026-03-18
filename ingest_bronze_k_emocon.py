@@ -25,8 +25,7 @@ modality_dirs = {
     "e4_data": "biosignal"
 }
 
-# ====================AUDIO (debate_audios)=================================
-
+# AUDIO (debate_audios)
 audio_dir = os.path.join(LOCAL_KEMOCON_PATH, "debate_audios")
 if os.path.exists(audio_dir):
     for file_name in os.listdir(audio_dir):
@@ -45,8 +44,7 @@ if os.path.exists(audio_dir):
             f"s3://{BUCKET}/{s3_path}", file_name, datetime.utcnow()
         ))
 
-# ====================VIDEO (debate_recordings)=================================
-
+# VIDEO (debate_recordings)
 video_dir = os.path.join(LOCAL_KEMOCON_PATH, "debate_recordings")
 if os.path.exists(video_dir):
     for file_name in os.listdir(video_dir):
@@ -65,8 +63,7 @@ if os.path.exists(video_dir):
             f"s3://{BUCKET}/{s3_path}", file_name, datetime.utcnow()
         ))
 
-# ====================BIOSIGNALS=================================
-
+# BIOSIGNALS
 e4_dir = os.path.join(LOCAL_KEMOCON_PATH, "e4_data")
 if os.path.exists(e4_dir):
     for participant_id in os.listdir(e4_dir):
@@ -85,8 +82,7 @@ if os.path.exists(e4_dir):
                 f"s3://{BUCKET}/{s3_path}", file_name, datetime.utcnow()
             ))
 
-# ====================EEG (neurosky_polar_data)=================================           
-
+# EEG (neurosky_polar_data
 eeg_dir = os.path.join(LOCAL_KEMOCON_PATH, "neurosky_polar_data")
 if os.path.exists(eeg_dir):
     for participant_id in os.listdir(eeg_dir):
@@ -128,4 +124,4 @@ df = spark.createDataFrame(
     .save(f"s3a://{BUCKET}/{BASE_PATH}/delta/k_emocon_files_metadata")
 )
 
-print("✅ BRONZE ingest for K-EmoCon completed successfully.")
+print("BRONZE ingest for K-EmoCon completed successfully.")

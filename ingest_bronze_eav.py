@@ -85,4 +85,4 @@ df = spark.createDataFrame(
     .save(f"s3a://{BUCKET}/{BASE_PATH}/delta/eav_files_metadata")
 )
 
-print("✅ BRONZE ingest for EAV completed successfully.")
+print("BRONZE ingest for EAV completed successfully.")
