@@ -49,3 +49,88 @@ datasets:
     dyadic_separator: "_"
     silver_base_prefix: 01_entity_resolution/k-emocon
     silver_files_table: 01_entity_resolution/k-emocon/delta/k_emocon_files_metadata
+
+# Silver — Step 02: Time Audit
+time_audit:
+  output_prefix: "02_time_audit/metadata"
+  output_filename: "time_audit.csv"
+
+  datasets:
+
+    kemocon:
+      dataset_label: "K-EmoCon"
+      silver_files_prefix: "01_entity_resolution/k-emocon/files"
+      subjects_bucket: "bronze"
+      subjects_path: "k-emocon/auxiliary/metadata/metadata/subjects.csv"
+      timestamp_col: "timestamp"
+      timestamp_unit_ms: true
+      signals:
+        "E4_BVP.csv":
+          signal_type: "E4_BVP"
+          device: "Empatica E4"
+          modality: "physio"
+          declared_hz: 64.0
+        "E4_EDA.csv":
+          signal_type: "E4_EDA"
+          device: "Empatica E4"
+          modality: "physio"
+          declared_hz: 4.0
+        "E4_ACC.csv":
+          signal_type: "E4_ACC"
+          device: "Empatica E4"
+          modality: "physio"
+          declared_hz: 32.0
+        "E4_HR.csv":
+          signal_type: "E4_HR"
+          device: "Empatica E4"
+          modality: "physio"
+          declared_hz: 1.0
+        "E4_IBI.csv":
+          signal_type: "E4_IBI"
+          device: "Empatica E4"
+          modality: "physio"
+          declared_hz: null
+        "E4_TEMP.csv":
+          signal_type: "E4_TEMP"
+          device: "Empatica E4"
+          modality: "physio"
+          declared_hz: 4.0
+        "BrainWave.csv":
+          signal_type: "BrainWave"
+          device: "NeuroSky"
+          modality: "eeg"
+          declared_hz: null
+        "Polar_HR.csv":
+          signal_type: "Polar_HR"
+          device: "Polar H7"
+          modality: "physio"
+          declared_hz: 1.0
+      audio_signal:
+        signal_type: "audio"
+        device: "smartphone"
+        modality: "audio"
+      video_signal:
+        signal_type: "video"
+        device: "smartphone"
+        modality: "video"
+
+    eav:
+      dataset_label: "EAV"
+      silver_files_prefix: "01_entity_resolution/eav/files"
+      eeg_signal:
+        signal_type: "eeg"
+        device: "BrainAmp"
+        modality: "eeg"
+        declared_hz: 500.0
+        label_suffix: "_label"
+        timepoints_axis: 0
+        instances_axis: 2
+      audio_signal:
+        signal_type: "audio"
+        device: "microphone"
+        modality: "audio"
+      video_signal:
+        signal_type: "video"
+        device: "webcam"
+        modality: "video"
+      trial_id_pattern: "^(\\d+)_"
