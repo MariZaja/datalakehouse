@@ -82,7 +82,7 @@ def _open_mat_h5py(path: str) -> List[Dict]:
         return [{"level": "ERROR", "msg": f"Cannot open HDF5 .mat file: {e}"}]
 
 
-def _validate_mat(path: str) -> List[Dict]:
+def _validate_mat(path: str, rule: Dict) -> List[Dict]:
     fmt = _detect_mat_format(path)
 
     if fmt in ("hdf5", "matlab_v73"):
@@ -99,7 +99,7 @@ def _validate_mat(path: str) -> List[Dict]:
         return [{"level": "ERROR", "msg": f"Cannot open .mat file: {e}"}]
 
 
-def _validate_csv(path: str) -> List[Dict]:
+def _validate_csv(path: str, rule: Dict) -> List[Dict]:
     try:
         import pandas as pd
         pd.read_csv(path, nrows=1)
@@ -108,7 +108,7 @@ def _validate_csv(path: str) -> List[Dict]:
         return [{"level": "ERROR", "msg": f"Cannot open CSV: {e}"}]
 
 
-def _validate_xlsx(path: str) -> List[Dict]:
+def _validate_xlsx(path: str, rule: Dict) -> List[Dict]:
     try:
         import pandas as pd
         pd.read_excel(path, nrows=1)
