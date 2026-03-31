@@ -96,7 +96,7 @@ log "  Bronze Pipeline  |  dataset=$DATASET  |  $TIMESTAMP"
 log "========================================================"
 
 run_stage "validate_raw" "Validate raw local files (pre-upload)" \
-    "$PYTHON" "$SCRIPT_DIR/validate_raw.py" \
+    "$PYTHON" "$SCRIPT_DIR/bronze/validate_raw.py" \
         --dataset "$DATASET" \
         --config  "$SCRIPT_DIR/pipeline_config.yaml" \
         --output  "$REPORTS_DIR"
@@ -110,7 +110,7 @@ if [[ "$VALIDATE_RAW_STATUS" == "FAIL" ]]; then
 else
     # Stage 2 — upload_bronze
     set +e
-    "$PYTHON" "$SCRIPT_DIR/upload_bronze.py" \
+    "$PYTHON" "$SCRIPT_DIR/bronze/upload_bronze.py" \
         --dataset "$DATASET" \
         --output  "$REPORTS_DIR"
     UPLOAD_EXIT=$?
@@ -142,7 +142,7 @@ else
 
         # Stage 3 — validate_bronze_integrity
         run_stage "validate_bronze_integrity" "Validate bronze integrity in MinIO (post-upload)" \
-            "$PYTHON" "$SCRIPT_DIR/validate_bronze_integrity.py" \
+            "$PYTHON" "$SCRIPT_DIR/bronze/validate_bronze_integrity.py" \
                 --dataset "$DATASET" \
                 --config  "$SCRIPT_DIR/pipeline_config.yaml" \
                 --output  "$REPORTS_DIR"
