@@ -3,24 +3,26 @@ bucket_silver: silver
 
 datasets:
 
+  common:
+    allowed_sub_prefixes: [files, auxiliary, delta]
+    entity_id_column: entity_id
+    entity_count_min: 1
+    modality_column: modality
+    files_expected_columns:
+      [file_id, dataset, entity_id, modality, file_path, file_name, ingestion_time, ingest_ts]
+    aux_expected_columns:
+      [record_id, dataset, category, source_path, file_name, related_entity, ingestion_time, ingest_ts]
+
   eav:
     base_prefix: eav
     files_prefix: eav/files/
-    allowed_sub_prefixes: [files, auxiliary, delta]
     expected_prefixes:
       - eav/files/
       - eav/auxiliary/
       - eav/delta/
     files_table: eav/delta/eav_files_metadata
     aux_table:   eav/delta/auxiliary_metadata
-    entity_id_column: entity_id
-    entity_count_min: 1
-    modality_column: modality
     expected_modalities: [audio, video, eeg]
-    files_expected_columns:
-      [file_id, dataset, entity_id, modality, file_path, file_name, ingestion_time, ingest_ts]
-    aux_expected_columns:
-      [record_id, dataset, category, source_path, file_name, related_entity, ingestion_time, ingest_ts]
     # Silver — entity
     id_pattern: "^subject(\\d+)$"
     silver_base_prefix: 01_entity_resolution/eav
@@ -29,21 +31,13 @@ datasets:
   kemocon:
     base_prefix: k-emocon
     files_prefix: k-emocon/files/
-    allowed_sub_prefixes: [files, auxiliary, delta]
     expected_prefixes:
       - k-emocon/files/
       - k-emocon/auxiliary/
       - k-emocon/delta/
     files_table: k-emocon/delta/k_emocon_files_metadata
     aux_table:   k-emocon/delta/auxiliary_metadata
-    entity_id_column: entity_id
-    entity_count_min: 1
-    modality_column: modality
     expected_modalities: [audio, video, eeg, biosignal]
-    files_expected_columns:
-      [file_id, dataset, entity_id, modality, file_path, file_name, ingestion_time, ingest_ts]
-    aux_expected_columns:
-      [record_id, dataset, category, source_path, file_name, related_entity, ingestion_time, ingest_ts]
     # Silver — entity
     id_pattern: "^p?(\\d+)$"
     dyadic_separator: "_"
@@ -134,3 +128,65 @@ time_audit:
         device: "webcam"
         modality: "video"
       trial_id_pattern: "^(\\d+)_"
+
+# Bronze — raw data validation (pre-upload) and upload configuration
+bronze_validation:
+  datasets:
+
+    eav:
+      local_root_env: "LOCAL_EAV_PATH"
+      subject_pattern: "^subject\\d+$"
+      modalities:
+        Audio:
+          file_type: "audio"
+          extensions: [".wav"]
+          min_duration_s: 20.0        # trial duration is 20s; shorter files are truncated/corrupt
+          max_duration_s: 30.0
+          expected_sr: 44100
+        Video:
+          file_type: "video"
+          extensions: [".mp4"]
+          min_size_bytes: 524288
+        EEG:
+          file_type: "mat"
+          extensions: [".mat"]
+          expected_sr: 500            # declared in silver config; noted here for documentation
+      auxiliary_root_relative: ".."   # aux files are one level ABOVE local_root (in data/EAV/, not data/EAV/EAV/)
+      auxiliary_files:
+        - filename: "meta_data.csv"
+          file_type: "csv"
+        - filename: "subjects.csv"
+          file_type: "csv"
+        - filename: "questionnaire.xlsx"
+          file_type: "xlsx"
+
+    kemocon:
+      local_root_env: "LOCAL_KEMOCON_PATH"
+      flat_dirs:
+        debate_audios:
+          file_type: "audio"
+          extensions: [".wav"]
+          min_duration_s: 60.0
+          max_duration_s: 7200.0
+          expected_sr: null
+        debate_recordings:
+          file_type: "video"
+          extensions: [".mp4"]
+          min_size_bytes: 1048576
+      participant_dirs:
+        e4_data:
+          file_type: "csv"
+          extensions: [".csv"]
+        neurosky_polar_data:
+          file_type: "csv"
+          extensions: [".csv"]
+      auxiliary_dirs:
+        emotion_annotations:
+          file_type: "csv"
+          extensions: [".csv", ".tsv"]
+        data_quality_tables:
+          file_type: "csv"
+          extensions: [".csv"]
+        metadata:
+          file_type: "csv"
+          extensions: [".csv"]

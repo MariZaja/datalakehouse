@@ -76,19 +76,7 @@ def check_no_unknown_prefixes(minio_client, bucket: str, dataset: str, base_pref
         return _fail(check, dataset, f"Unknown sub-prefix(es) found under '{base}'.", [f"Unknown: {base}{u}/" for u in unknown])
     return _pass(check, dataset, f"No unknown sub-prefixes under '{base}'.")
 
-# Check 4 — no empty (0-byte) files
-def check_no_empty_files(minio_client, bucket: str, dataset: str, files_prefix: str) -> Dict[str, Any]:
-    check = "no_empty_files"
-    empty = [
-        obj.object_name
-        for obj in minio_client.list_objects(bucket, prefix=files_prefix, recursive=True)
-        if obj.size == 0
-    ]
-    if empty:
-        return _fail(check, dataset, f"{len(empty)} zero-byte file(s) found.", empty[:20])
-    return _pass(check, dataset, f"No zero-byte files under '{files_prefix}'.")
-
-# Check 5 — Delta tables readable
+# Check 4 — Delta tables readable
 def check_delta_tables_readable(spark, bucket: str, dataset: str, files_table: str, aux_table: str) -> Dict[str, Any]:
     check = "delta_tables_readable"
     errors = []
@@ -102,7 +90,7 @@ def check_delta_tables_readable(spark, bucket: str, dataset: str, files_table: s
         return _fail(check, dataset, f"{len(errors)} Delta table(s) not readable.", errors)
     return _pass(check, dataset, "Both Delta tables readable.")
 
-# Check 6 — Delta schema matches expected columns
+# Check 5 — Delta schema matches expected columns
 def check_delta_schema(spark, bucket: str, dataset: str, files_table: str, aux_table: str,
                        files_expected_columns: List[str], aux_expected_columns: List[str]) -> Dict[str, Any]:
     check = "delta_schema"
@@ -122,7 +110,7 @@ def check_delta_schema(spark, bucket: str, dataset: str, files_table: str, aux_t
         return _fail(check, dataset, "Schema mismatch in one or more Delta tables.", details)
     return _pass(check, dataset, "All expected columns present in both Delta tables.")
 
-# Check 7 — entity count above minimum
+# Check 6 — entity count above minimum
 def check_entity_count(spark, bucket: str, dataset: str, files_table: str,
                        entity_id_column: str, entity_count_min: int) -> Dict[str, Any]:
     check = "entity_count"
@@ -140,7 +128,7 @@ def check_entity_count(spark, bucket: str, dataset: str, files_table: str,
                      [f"actual={actual}, min={entity_count_min}"])
     return _pass(check, dataset, f"Entity count: {actual} (min={entity_count_min}).")
 
-# Check 8 — all expected modalities have at least one file
+# Check 7 — all expected modalities have at least one file
 def check_modalities_have_files(spark, bucket: str, dataset: str, files_table: str,
                                 modality_column: str, expected_modalities: List[str]) -> Dict[str, Any]:
     check = "modalities_have_files"
@@ -173,12 +161,15 @@ def run_all_checks(minio_client, spark, cfg: Dict[str, Any]) -> List[Dict[str, A
         logger.error("Bucket missing — skipping all remaining checks.")
         return results
 
+    common = cfg["datasets"].get("common", {})
     for dataset, dcfg in cfg["datasets"].items():
+        if dataset == "common":
+            continue
+        dcfg = {**common, **dcfg}
         logger.info("--- %s ---", dataset)
         results += [
             check_expected_prefixes(minio_client, bucket, dataset, dcfg["expected_prefixes"]),
             check_no_unknown_prefixes(minio_client, bucket, dataset, dcfg["base_prefix"], dcfg["allowed_sub_prefixes"]),
-            check_no_empty_files(minio_client, bucket, dataset, dcfg["files_prefix"]),
             check_delta_tables_readable(spark, bucket, dataset, dcfg["files_table"], dcfg["aux_table"]),
             check_delta_schema(spark, bucket, dataset, dcfg["files_table"], dcfg["aux_table"],
                                dcfg["files_expected_columns"], dcfg["aux_expected_columns"]),
