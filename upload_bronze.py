@@ -6,10 +6,18 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
 from minio import Minio
+
+from bronze_common import (
+    FileEntry,
+    build_eav_manifest,
+    build_kemocon_manifest,
+    env,
+    get_minio_client,
+)
 
 load_dotenv()
 
@@ -19,189 +27,6 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("upload_bronze")
-
-
-# Configuration helpers
-def _env(key: str) -> str:
-    val = os.getenv(key)
-    if not val:
-        raise ValueError(f"Required environment variable {key!r} is not set.")
-    return val
-
-
-def _get_minio_client() -> Minio:
-    return Minio(
-        _env("MINIO_ENDPOINT"),
-        access_key=_env("MINIO_ACCESS_KEY"),
-        secret_key=_env("MINIO_SECRET_KEY"),
-        secure=False,
-    )
-
-
-# File entry — represents one file to upload
-class FileEntry(NamedTuple):
-    local_path: str
-    s3_path: str
-    dataset: str
-    entity_id: str
-    modality: str
-    file_name: str
-    table: str         # "files" or "aux" — which Delta table to write to
-
-
-# Manifest builders
-def _build_eav_manifest(eav_root: str, base_path: str) -> List[FileEntry]:
-    entries: List[FileEntry] = []
-    modality_map = {"Audio": "audio", "Video": "video", "EEG": "eeg"}
-
-    for item in sorted(os.listdir(eav_root)):
-        subject_path = os.path.join(eav_root, item)
-        if not item.startswith("subject") or not os.path.isdir(subject_path):
-            continue
-
-        for src_mod, dst_mod in modality_map.items():
-            src_dir = os.path.join(subject_path, src_mod)
-            if not os.path.isdir(src_dir):
-                continue
-            for file_name in sorted(os.listdir(src_dir)):
-                if file_name.startswith("."):
-                    continue
-                local_file = os.path.join(src_dir, file_name)
-                if not os.path.isfile(local_file):
-                    continue
-                s3_path = f"{base_path}/files/entity={item}/modality={dst_mod}/{file_name}"
-                entries.append(FileEntry(
-                    local_path=local_file,
-                    s3_path=s3_path,
-                    dataset="EAV",
-                    entity_id=item,
-                    modality=dst_mod,
-                    file_name=file_name,
-                    table="files",
-                ))
-
-    # Auxiliary files are one level above eav_root (e.g. data/EAV/, not data/EAV/EAV/)
-    aux_root = os.path.dirname(eav_root.rstrip("/\\"))
-    aux_files = {
-        "meta_data.csv": "metadata",
-        "subjects.csv": "metadata",
-        "questionnaire.xlsx": "annotations",
-    }
-    for file_name, category in aux_files.items():
-        local_file = os.path.join(aux_root, file_name)
-        if not os.path.exists(local_file):
-            continue
-        s3_path = f"{base_path}/auxiliary/{category}/{file_name}"
-        entries.append(FileEntry(
-            local_path=local_file,
-            s3_path=s3_path,
-            dataset="EAV",
-            entity_id="global",
-            modality=category,
-            file_name=file_name,
-            table="aux",
-        ))
-
-    return entries
-
-
-def _build_kemocon_manifest(kemocon_root: str, base_path: str) -> List[FileEntry]:
-    entries: List[FileEntry] = []
-
-    # Audio (debate_audios)
-    audio_dir = os.path.join(kemocon_root, "debate_audios")
-    if os.path.isdir(audio_dir):
-        for file_name in sorted(os.listdir(audio_dir)):
-            if not file_name.endswith(".wav") or file_name.startswith("."):
-                continue
-            entity_id = file_name.replace(".wav", "").replace(".", "_")
-            local_file = os.path.join(audio_dir, file_name)
-            s3_path = f"{base_path}/files/entity={entity_id}/modality=audio/{file_name}"
-            entries.append(FileEntry(
-                local_path=local_file, s3_path=s3_path,
-                dataset="K-EmoCon", entity_id=entity_id,
-                modality="audio", file_name=file_name, table="files",
-            ))
-
-    # Video (debate_recordings)
-    video_dir = os.path.join(kemocon_root, "debate_recordings")
-    if os.path.isdir(video_dir):
-        for file_name in sorted(os.listdir(video_dir)):
-            if not file_name.endswith(".mp4") or file_name.startswith("."):
-                continue
-            entity_id = file_name.split("_")[0]
-            local_file = os.path.join(video_dir, file_name)
-            s3_path = f"{base_path}/files/entity={entity_id}/modality=video/{file_name}"
-            entries.append(FileEntry(
-                local_path=local_file, s3_path=s3_path,
-                dataset="K-EmoCon", entity_id=entity_id,
-                modality="video", file_name=file_name, table="files",
-            ))
-
-    # Biosignals
-    e4_dir = os.path.join(kemocon_root, "e4_data")
-    if os.path.isdir(e4_dir):
-        for participant_id in sorted(os.listdir(e4_dir)):
-            part_dir = os.path.join(e4_dir, participant_id)
-            if not os.path.isdir(part_dir) or participant_id.startswith("."):
-                continue
-            for file_name in sorted(os.listdir(part_dir)):
-                if file_name.startswith("."):
-                    continue
-                local_file = os.path.join(part_dir, file_name)
-                if not os.path.isfile(local_file):
-                    continue
-                s3_path = f"{base_path}/files/entity={participant_id}/modality=biosignal/{file_name}"
-                entries.append(FileEntry(
-                    local_path=local_file, s3_path=s3_path,
-                    dataset="K-EmoCon", entity_id=participant_id,
-                    modality="biosignal", file_name=file_name, table="files",
-                ))
-
-    # EEG
-    eeg_dir = os.path.join(kemocon_root, "neurosky_polar_data")
-    if os.path.isdir(eeg_dir):
-        for participant_id in sorted(os.listdir(eeg_dir)):
-            part_dir = os.path.join(eeg_dir, participant_id)
-            if not os.path.isdir(part_dir) or participant_id.startswith("."):
-                continue
-            for file_name in sorted(os.listdir(part_dir)):
-                if file_name.startswith("."):
-                    continue
-                local_file = os.path.join(part_dir, file_name)
-                if not os.path.isfile(local_file):
-                    continue
-                s3_path = f"{base_path}/files/entity={participant_id}/modality=eeg/{file_name}"
-                entries.append(FileEntry(
-                    local_path=local_file, s3_path=s3_path,
-                    dataset="K-EmoCon", entity_id=participant_id,
-                    modality="eeg", file_name=file_name, table="files",
-                ))
-
-    # Auxiliary dirs
-    aux_dirs = {
-        "emotion_annotations": "annotations",
-        "data_quality_tables": "quality",
-        "metadata": "metadata",
-    }
-    for src_dir_name, category in aux_dirs.items():
-        full_dir = os.path.join(kemocon_root, src_dir_name)
-        if not os.path.isdir(full_dir):
-            continue
-        for root, _, files in os.walk(full_dir):
-            for file_name in sorted(files):
-                if file_name.startswith("."):
-                    continue
-                local_file = os.path.join(root, file_name)
-                relative_path = os.path.relpath(local_file, kemocon_root)
-                s3_path = f"{base_path}/auxiliary/{category}/{relative_path}"
-                entries.append(FileEntry(
-                    local_path=local_file, s3_path=s3_path,
-                    dataset="K-EmoCon", entity_id="global",
-                    modality=category, file_name=file_name, table="aux",
-                ))
-
-    return entries
 
 
 # MinIO inventory fetch (one list_objects call per top-level prefix)
@@ -322,27 +147,27 @@ def _write_delta_tables(
 
 # Main upload orchestration
 def run_upload(dataset: str) -> Dict[str, Any]:
-    bucket = _env("BUCKET_BRONZE")
+    bucket = env("BUCKET_BRONZE")
     base_path_eav: Optional[str] = None
     base_path_kemocon: Optional[str] = None
     all_entries: List[FileEntry] = []
 
     if dataset in ("eav", "all"):
-        eav_root = _env("LOCAL_EAV_PATH")
-        base_path_eav = _env("BASE_PATH_EAV")
-        all_entries += _build_eav_manifest(eav_root, base_path_eav)
+        eav_root = env("LOCAL_EAV_PATH")
+        base_path_eav = env("BASE_PATH_EAV")
+        all_entries += build_eav_manifest(eav_root, base_path_eav)
         logger.info("EAV manifest: %d files", sum(1 for e in all_entries if e.dataset == "EAV"))
 
     if dataset in ("kemocon", "all"):
-        kemocon_root = _env("LOCAL_KEMOCON_PATH")
-        base_path_kemocon = _env("BASE_PATH_KEMOCON")
-        all_entries += _build_kemocon_manifest(kemocon_root, base_path_kemocon)
+        kemocon_root = env("LOCAL_KEMOCON_PATH")
+        base_path_kemocon = env("BASE_PATH_KEMOCON")
+        all_entries += build_kemocon_manifest(kemocon_root, base_path_kemocon)
         logger.info("K-EmoCon manifest: %d files",
                     sum(1 for e in all_entries if e.dataset == "K-EmoCon"))
 
     logger.info("Total manifest: %d files", len(all_entries))
 
-    minio_client = _get_minio_client()
+    minio_client = get_minio_client()
     uploaded, skipped, failed = _upload_entries(minio_client, all_entries, bucket)
 
     logger.info("Upload complete — uploaded=%d, skipped=%d, failed=%d",
