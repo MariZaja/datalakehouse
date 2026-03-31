@@ -3,24 +3,26 @@ bucket_silver: silver
 
 datasets:
 
+  common:
+    allowed_sub_prefixes: [files, auxiliary, delta]
+    entity_id_column: entity_id
+    entity_count_min: 1
+    modality_column: modality
+    files_expected_columns:
+      [file_id, dataset, entity_id, modality, file_path, file_name, ingestion_time, ingest_ts]
+    aux_expected_columns:
+      [record_id, dataset, category, source_path, file_name, related_entity, ingestion_time, ingest_ts]
+
   eav:
     base_prefix: eav
     files_prefix: eav/files/
-    allowed_sub_prefixes: [files, auxiliary, delta]
     expected_prefixes:
       - eav/files/
       - eav/auxiliary/
       - eav/delta/
     files_table: eav/delta/eav_files_metadata
     aux_table:   eav/delta/auxiliary_metadata
-    entity_id_column: entity_id
-    entity_count_min: 1
-    modality_column: modality
     expected_modalities: [audio, video, eeg]
-    files_expected_columns:
-      [file_id, dataset, entity_id, modality, file_path, file_name, ingestion_time, ingest_ts]
-    aux_expected_columns:
-      [record_id, dataset, category, source_path, file_name, related_entity, ingestion_time, ingest_ts]
     # Silver — entity
     id_pattern: "^subject(\\d+)$"
     silver_base_prefix: 01_entity_resolution/eav
@@ -29,21 +31,13 @@ datasets:
   kemocon:
     base_prefix: k-emocon
     files_prefix: k-emocon/files/
-    allowed_sub_prefixes: [files, auxiliary, delta]
     expected_prefixes:
       - k-emocon/files/
       - k-emocon/auxiliary/
       - k-emocon/delta/
     files_table: k-emocon/delta/k_emocon_files_metadata
     aux_table:   k-emocon/delta/auxiliary_metadata
-    entity_id_column: entity_id
-    entity_count_min: 1
-    modality_column: modality
     expected_modalities: [audio, video, eeg, biosignal]
-    files_expected_columns:
-      [file_id, dataset, entity_id, modality, file_path, file_name, ingestion_time, ingest_ts]
-    aux_expected_columns:
-      [record_id, dataset, category, source_path, file_name, related_entity, ingestion_time, ingest_ts]
     # Silver — entity
     id_pattern: "^p?(\\d+)$"
     dyadic_separator: "_"
@@ -152,7 +146,7 @@ bronze_validation:
         Video:
           file_type: "video"
           extensions: [".mp4"]
-          min_size_bytes: 524288      # 512 KB — files below this are truncated (observed: 728 KB+)
+          min_size_bytes: 524288
         EEG:
           file_type: "mat"
           extensions: [".mat"]
@@ -168,38 +162,31 @@ bronze_validation:
 
     kemocon:
       local_root_env: "LOCAL_KEMOCON_PATH"
-      flat_dirs:                      # files directly in the named subdirectory
+      flat_dirs:
         debate_audios:
-          dir_name: "debate_audios"
           file_type: "audio"
           extensions: [".wav"]
-          min_duration_s: 60.0        # full debate sessions; < 1 min is suspicious
+          min_duration_s: 60.0
           max_duration_s: 7200.0
           expected_sr: null
         debate_recordings:
-          dir_name: "debate_recordings"
           file_type: "video"
           extensions: [".mp4"]
-          min_size_bytes: 1048576     # 1 MB — debate recordings are long
-      participant_dirs:               # files in participant-ID subdirectories
+          min_size_bytes: 1048576
+      participant_dirs:
         e4_data:
-          dir_name: "e4_data"
           file_type: "csv"
           extensions: [".csv"]
         neurosky_polar_data:
-          dir_name: "neurosky_polar_data"
           file_type: "csv"
           extensions: [".csv"]
-      auxiliary_dirs:                 # walked recursively
+      auxiliary_dirs:
         emotion_annotations:
-          dir_name: "emotion_annotations"
           file_type: "csv"
           extensions: [".csv", ".tsv"]
         data_quality_tables:
-          dir_name: "data_quality_tables"
           file_type: "csv"
           extensions: [".csv"]
         metadata:
-          dir_name: "metadata"
           file_type: "csv"
           extensions: [".csv"]

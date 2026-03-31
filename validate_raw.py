@@ -168,7 +168,7 @@ def collect_kemocon_files(local_root: str, dataset_cfg: Dict) -> List[Tuple]:
     files = []
 
     for dir_key, rule in dataset_cfg.get("flat_dirs", {}).items():
-        src_dir = os.path.join(local_root, rule.get("dir_name", dir_key))
+        src_dir = os.path.join(local_root, dir_key)
         if not os.path.isdir(src_dir):
             continue
         extensions = [e.lower() for e in rule.get("extensions", [])]
@@ -180,7 +180,7 @@ def collect_kemocon_files(local_root: str, dataset_cfg: Dict) -> List[Tuple]:
             files.append((os.path.join(src_dir, file_name), dir_key, "flat", rule))
 
     for dir_key, rule in dataset_cfg.get("participant_dirs", {}).items():
-        src_dir = os.path.join(local_root, rule.get("dir_name", dir_key))
+        src_dir = os.path.join(local_root, dir_key)
         if not os.path.isdir(src_dir):
             continue
         extensions = [e.lower() for e in rule.get("extensions", [])]
@@ -196,7 +196,7 @@ def collect_kemocon_files(local_root: str, dataset_cfg: Dict) -> List[Tuple]:
                 files.append((os.path.join(part_dir, file_name), dir_key, participant_id, rule))
 
     for dir_key, rule in dataset_cfg.get("auxiliary_dirs", {}).items():
-        full_dir = os.path.join(local_root, rule.get("dir_name", dir_key))
+        full_dir = os.path.join(local_root, dir_key)
         if not os.path.isdir(full_dir):
             continue
         extensions = [e.lower() for e in rule.get("extensions", [])]

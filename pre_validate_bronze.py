@@ -161,7 +161,11 @@ def run_all_checks(minio_client, spark, cfg: Dict[str, Any]) -> List[Dict[str, A
         logger.error("Bucket missing — skipping all remaining checks.")
         return results
 
+    common = cfg["datasets"].get("common", {})
     for dataset, dcfg in cfg["datasets"].items():
+        if dataset == "common":
+            continue
+        dcfg = {**common, **dcfg}
         logger.info("--- %s ---", dataset)
         results += [
             check_expected_prefixes(minio_client, bucket, dataset, dcfg["expected_prefixes"]),
