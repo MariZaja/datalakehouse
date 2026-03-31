@@ -389,6 +389,9 @@ def main() -> None:
     bronze_bucket = cfg["bucket"]
     silver_bucket = cfg["bucket_silver"]
 
+    common = cfg["datasets"].get("common", {})
+    datasets = {k: {**common, **v} for k, v in cfg["datasets"].items() if k != "common"}
+
     phase1_audits = []
     transform_results = []
     phase3_audits = []
@@ -396,7 +399,7 @@ def main() -> None:
 
     logger.info("PHASE 1 — ID Audit (Bronze, before transformation)")
 
-    for dataset, dcfg in cfg["datasets"].items():
+    for dataset, dcfg in datasets.items():
         logger.info("--- %s ---", dataset)
         audit, _ = audit_entity_ids(
             minio_client,
@@ -410,7 +413,7 @@ def main() -> None:
 
     logger.info("PHASE 2 — Transformation (Bronze → Silver)")
 
-    for dataset, dcfg in cfg["datasets"].items():
+    for dataset, dcfg in datasets.items():
         logger.info("--- %s ---", dataset)
         results = transform_dataset(
             minio_client, spark,
@@ -421,7 +424,7 @@ def main() -> None:
 
     logger.info("PHASE 3 — ID Audit (Silver, after transformation)")
 
-    for dataset, dcfg in cfg["datasets"].items():
+    for dataset, dcfg in datasets.items():
         logger.info("--- %s ---", dataset)
         silver_files_prefix = f"{dcfg['silver_base_prefix']}/files/"
         audit, _ = audit_entity_ids(
