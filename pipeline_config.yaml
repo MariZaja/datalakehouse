@@ -134,3 +134,72 @@ time_audit:
         device: "webcam"
         modality: "video"
       trial_id_pattern: "^(\\d+)_"
+
+# Bronze — raw data validation (pre-upload) and upload configuration
+bronze_validation:
+  datasets:
+
+    eav:
+      local_root_env: "LOCAL_EAV_PATH"
+      subject_pattern: "^subject\\d+$"
+      modalities:
+        Audio:
+          file_type: "audio"
+          extensions: [".wav"]
+          min_duration_s: 20.0        # trial duration is 20s; shorter files are truncated/corrupt
+          max_duration_s: 30.0
+          expected_sr: 44100
+        Video:
+          file_type: "video"
+          extensions: [".mp4"]
+          min_size_bytes: 524288      # 512 KB — files below this are truncated (observed: 728 KB+)
+        EEG:
+          file_type: "mat"
+          extensions: [".mat"]
+          expected_sr: 500            # declared in silver config; noted here for documentation
+      auxiliary_root_relative: ".."   # aux files are one level ABOVE local_root (in data/EAV/, not data/EAV/EAV/)
+      auxiliary_files:
+        - filename: "meta_data.csv"
+          file_type: "csv"
+        - filename: "subjects.csv"
+          file_type: "csv"
+        - filename: "questionnaire.xlsx"
+          file_type: "xlsx"
+
+    kemocon:
+      local_root_env: "LOCAL_KEMOCON_PATH"
+      flat_dirs:                      # files directly in the named subdirectory
+        debate_audios:
+          dir_name: "debate_audios"
+          file_type: "audio"
+          extensions: [".wav"]
+          min_duration_s: 60.0        # full debate sessions; < 1 min is suspicious
+          max_duration_s: 7200.0
+          expected_sr: null
+        debate_recordings:
+          dir_name: "debate_recordings"
+          file_type: "video"
+          extensions: [".mp4"]
+          min_size_bytes: 1048576     # 1 MB — debate recordings are long
+      participant_dirs:               # files in participant-ID subdirectories
+        e4_data:
+          dir_name: "e4_data"
+          file_type: "csv"
+          extensions: [".csv"]
+        neurosky_polar_data:
+          dir_name: "neurosky_polar_data"
+          file_type: "csv"
+          extensions: [".csv"]
+      auxiliary_dirs:                 # walked recursively
+        emotion_annotations:
+          dir_name: "emotion_annotations"
+          file_type: "csv"
+          extensions: [".csv", ".tsv"]
+        data_quality_tables:
+          dir_name: "data_quality_tables"
+          file_type: "csv"
+          extensions: [".csv"]
+        metadata:
+          dir_name: "metadata"
+          file_type: "csv"
+          extensions: [".csv"]
