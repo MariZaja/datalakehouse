@@ -129,17 +129,6 @@ python silver/silver_missingness_detection.py
 
 ---
 
-## Silver Step 03 — Missingness Detection outputs
-
-| File | Content |
-|------|---------|
-| `03_missingness/missingness_report.csv` | One row per expected *(participant × signal × unit_id)*; columns: `status`, `missing_pct`, `reason`, … |
-| `03_missingness/missingness_gaps.json` | Gap intervals (start/end seconds) for signals with `status = partial_missing` |
-
-Known missing data (documented in the original papers) is declared in `pipeline_config.yaml` under `missingness_detection.datasets.<name>.known_missing` — not hardcoded in script logic.
-
----
-
 ## Project structure
 
 ```
