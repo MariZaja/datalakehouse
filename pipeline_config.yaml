@@ -190,3 +190,165 @@ bronze_validation:
         metadata:
           file_type: "csv"
           extensions: [".csv"]
+
+# Silver — Step 03: Missingness Detection
+missingness_detection:
+  output_prefix: "03_missingness"
+  output_report_filename: "missingness_report.csv"
+  output_gaps_filename: "missingness_gaps.json"
+  time_audit_key: "02_time_audit/metadata/time_audit.csv"
+
+  datasets:
+
+    kemocon:
+      dataset_label: "K-EmoCon"
+      silver_files_prefix: "01_entity_resolution/k-emocon/files"
+      timestamp_col: "timestamp"
+      timestamp_unit_ms: true
+      # One row per expected signal per participant (unit_id == participant_id for K-EmoCon)
+      expected_signals:
+        - signal_type: "E4_BVP"
+          device: "Empatica E4"
+          modality: "physio"
+          filename: "E4_BVP.csv"
+          zero_check: true    # BVP should not have sustained zeros
+          gap_detection: true
+        - signal_type: "E4_EDA"
+          device: "Empatica E4"
+          modality: "physio"
+          filename: "E4_EDA.csv"
+          zero_check: true    # EDA should not have sustained zeros
+          gap_detection: true
+        - signal_type: "E4_ACC"
+          device: "Empatica E4"
+          modality: "physio"
+          filename: "E4_ACC.csv"
+          zero_check: false
+          gap_detection: true
+        - signal_type: "E4_HR"
+          device: "Empatica E4"
+          modality: "physio"
+          filename: "E4_HR.csv"
+          zero_check: false
+          gap_detection: true
+        - signal_type: "E4_IBI"
+          device: "Empatica E4"
+          modality: "physio"
+          filename: "E4_IBI.csv"
+          zero_check: false
+          gap_detection: false  # IBI is event-based (sparse); gap detection not meaningful
+        - signal_type: "E4_TEMP"
+          device: "Empatica E4"
+          modality: "physio"
+          filename: "E4_TEMP.csv"
+          zero_check: false
+          gap_detection: true
+        - signal_type: "BrainWave"
+          device: "NeuroSky"
+          modality: "eeg"
+          filename: "BrainWave.csv"
+          zero_check: false
+          gap_detection: true
+        - signal_type: "Polar_HR"
+          device: "Polar H7"
+          modality: "physio"
+          filename: "Polar_HR.csv"
+          zero_check: false
+          gap_detection: true
+        - signal_type: "audio"
+          device: "smartphone"
+          modality: "audio"
+          ext: ".wav"
+          zero_check: true
+          gap_detection: false
+        - signal_type: "video"
+          device: "smartphone"
+          modality: "video"
+          ext: ".mp4"
+          zero_check: false
+          gap_detection: false
+      # Known missing documented in Park et al. 2020 (Scientific Data)
+      known_missing:
+        - participants: ["e02", "e03", "e06", "e07"]
+          signals: ["E4_BVP", "E4_EDA", "E4_ACC", "E4_HR", "E4_IBI", "E4_TEMP"]
+          scope: "total"
+          reason: "E4 device failure during data collection (Park et al. 2020)"
+        - participants: ["e26"]
+          signals: ["E4_IBI"]
+          scope: "total"
+          reason: "E4 internal algorithm rejected IBI as unreliable (Park et al. 2020)"
+        - participants: ["e17", "e20"]
+          signals: ["E4_EDA"]
+          scope: "total"
+          reason: "Likely poor sensor-skin contact (Park et al. 2020)"
+        - participants: ["e01", "e20"]
+          signals: ["BrainWave"]
+          scope: "total"
+          reason: "Faulty NeuroSky device (Park et al. 2020)"
+        - participants: ["e19"]
+          signals: ["BrainWave"]
+          scope: "partial"
+          approx_missing_pct: 32.0
+          reason: "Faulty NeuroSky device (Park et al. 2020)"
+        - participants: ["e22"]
+          signals: ["BrainWave"]
+          scope: "partial"
+          approx_missing_pct: 59.0
+          reason: "Faulty NeuroSky device (Park et al. 2020)"
+        - participants: ["e23"]
+          signals: ["BrainWave"]
+          scope: "partial"
+          approx_missing_pct: 36.0
+          reason: "Faulty NeuroSky device (Park et al. 2020)"
+        - participants: ["e03", "e12", "e18", "e20", "e21", "e29", "e30"]
+          signals: ["Polar_HR"]
+          scope: "total"
+          reason: "Polar H7 device error during data collection (Park et al. 2020)"
+        - participants: ["e04", "e22"]
+          signals: ["Polar_HR"]
+          scope: "partial"
+          approx_missing_pct: 38.0
+          reason: "Poor Polar H7 sensor contact (Park et al. 2020)"
+
+    eav:
+      dataset_label: "EAV"
+      silver_files_prefix: "01_entity_resolution/eav/files"
+      trial_id_pattern: "^(\\d+)_"
+      eeg_label_suffix: "_label"
+      eeg_declared_hz: 500.0
+      eeg_timepoints_axis: 0
+      eeg_instances_axis: 2
+      expected_signals:
+        - signal_type: "eeg"
+          device: "BrainAmp"
+          modality: "eeg"
+          ext: ".mat"
+          zero_check: false
+          gap_detection: false
+          per_trial: false      # single .mat per participant contains all trials
+          expected_instances: 200
+        - signal_type: "audio"
+          device: "microphone"
+          modality: "audio"
+          ext: ".wav"
+          zero_check: true
+          gap_detection: false
+          per_trial: true       # one .wav per trial
+          trial_id_start: 2     # even-numbered trials: 002, 004, …, 200
+          trial_id_step: 2
+          trial_id_count: 100
+          trial_id_format: "{:03d}"
+        - signal_type: "video"
+          device: "webcam"
+          modality: "video"
+          ext: ".mp4"
+          zero_check: false
+          gap_detection: false
+          per_trial: true       # one .mp4 per trial
+          trial_id_start: 1     # all trials: 001, 002, …, 200
+          trial_id_step: 1
+          trial_id_count: 200
+          trial_id_format: "{:03d}"
+      # Lee et al. 2024 (Scientific Data) declares no missing data.
+      # We verify independently; expected result: all rows complete.
+      known_missing: []
