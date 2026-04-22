@@ -54,8 +54,6 @@ time_audit:
     kemocon:
       dataset_label: "K-EmoCon"
       silver_files_prefix: "01_entity_resolution/k-emocon/files"
-      subjects_bucket: "bronze"
-      subjects_path: "k-emocon/auxiliary/metadata/metadata/subjects.csv"
       timestamp_col: "timestamp"
       timestamp_unit_ms: true
       signals:
@@ -63,42 +61,34 @@ time_audit:
           signal_type: "E4_BVP"
           device: "Empatica E4"
           modality: "physio"
-          declared_hz: 64.0
         "E4_EDA.csv":
           signal_type: "E4_EDA"
           device: "Empatica E4"
           modality: "physio"
-          declared_hz: 4.0
         "E4_ACC.csv":
           signal_type: "E4_ACC"
           device: "Empatica E4"
           modality: "physio"
-          declared_hz: 32.0
         "E4_HR.csv":
           signal_type: "E4_HR"
           device: "Empatica E4"
           modality: "physio"
-          declared_hz: 1.0
         "E4_IBI.csv":
           signal_type: "E4_IBI"
           device: "Empatica E4"
           modality: "physio"
-          declared_hz: null
         "E4_TEMP.csv":
           signal_type: "E4_TEMP"
           device: "Empatica E4"
           modality: "physio"
-          declared_hz: 4.0
         "BrainWave.csv":
           signal_type: "BrainWave"
           device: "NeuroSky"
           modality: "eeg"
-          declared_hz: null
         "Polar_HR.csv":
           signal_type: "Polar_HR"
           device: "Polar H7"
           modality: "physio"
-          declared_hz: 1.0
       audio_signal:
         signal_type: "audio"
         device: "smartphone"
@@ -195,8 +185,6 @@ bronze_validation:
 missingness_detection:
   output_prefix: "03_missingness"
   output_report_filename: "missingness_report.csv"
-  output_gaps_filename: "missingness_gaps.json"
-  time_audit_key: "02_time_audit/metadata/time_audit.csv"
 
   datasets:
 
@@ -205,66 +193,78 @@ missingness_detection:
       silver_files_prefix: "01_entity_resolution/k-emocon/files"
       timestamp_col: "timestamp"
       timestamp_unit_ms: true
+      subjects_bucket: "silver"
+      subjects_path: "01_entity_resolution/k-emocon/auxiliary/metadata/metadata/subjects.csv"
       # One row per expected signal per participant (unit_id == participant_id for K-EmoCon)
       expected_signals:
         - signal_type: "E4_BVP"
           device: "Empatica E4"
           modality: "physio"
           filename: "E4_BVP.csv"
+          declared_hz: 64.0
           zero_check: true    # BVP should not have sustained zeros
           gap_detection: true
         - signal_type: "E4_EDA"
           device: "Empatica E4"
           modality: "physio"
           filename: "E4_EDA.csv"
+          declared_hz: 4.0
           zero_check: true    # EDA should not have sustained zeros
           gap_detection: true
         - signal_type: "E4_ACC"
           device: "Empatica E4"
           modality: "physio"
           filename: "E4_ACC.csv"
+          declared_hz: 32.0
           zero_check: false
           gap_detection: true
         - signal_type: "E4_HR"
           device: "Empatica E4"
           modality: "physio"
           filename: "E4_HR.csv"
+          declared_hz: 1.0
           zero_check: false
           gap_detection: true
         - signal_type: "E4_IBI"
           device: "Empatica E4"
           modality: "physio"
           filename: "E4_IBI.csv"
+          declared_hz: null
           zero_check: false
           gap_detection: false  # IBI is event-based (sparse); gap detection not meaningful
         - signal_type: "E4_TEMP"
           device: "Empatica E4"
           modality: "physio"
           filename: "E4_TEMP.csv"
+          declared_hz: 4.0
           zero_check: false
           gap_detection: true
         - signal_type: "BrainWave"
           device: "NeuroSky"
           modality: "eeg"
           filename: "BrainWave.csv"
+          declared_hz: null
           zero_check: false
           gap_detection: true
         - signal_type: "Attention"
           device: "NeuroSky"
           modality: "eeg"
           filename: "Attention.csv"
+          declared_hz: null
           zero_check: false
           gap_detection: true
         - signal_type: "Meditation"
           device: "NeuroSky"
           modality: "eeg"
           filename: "Meditation.csv"
+          declared_hz: null
           zero_check: false
           gap_detection: true
         - signal_type: "Polar_HR"
           device: "Polar H7"
           modality: "physio"
           filename: "Polar_HR.csv"
+          declared_hz: 1.0
           zero_check: false
           gap_detection: true
         - signal_type: "audio"
@@ -280,15 +280,12 @@ missingness_detection:
           zero_check: false
           gap_detection: false
       data_availability_key: "01_entity_resolution/k-emocon/auxiliary/metadata/metadata/data_availability.csv"
-      e4_completeness_key: "01_entity_resolution/k-emocon/auxiliary/quality/data_quality_tables/e4_completeness.csv"
-      neuro_polar_completeness_key: "01_entity_resolution/k-emocon/auxiliary/quality/data_quality_tables/neuro_polar_completeness.csv"
 
     eav:
       dataset_label: "EAV"
       silver_files_prefix: "01_entity_resolution/eav/files"
       trial_id_pattern: "^(\\d+)_"
       eeg_label_suffix: "_label"
-      eeg_declared_hz: 500.0
       eeg_timepoints_axis: 0
       eeg_instances_axis: 2
       expected_signals:
@@ -300,6 +297,7 @@ missingness_detection:
           gap_detection: false
           per_trial: false      # single .mat per participant contains all trials
           expected_instances: 200
+          expected_timepoints: 10000  # 20s × 500 Hz
         - signal_type: "audio"
           device: "microphone"
           modality: "audio"
@@ -307,6 +305,7 @@ missingness_detection:
           zero_check: true
           gap_detection: false
           per_trial: true       # one .wav per trial
+          trial_duration_s: 20.0
           trial_id_start: 2     # even-numbered trials: 002, 004, …, 200
           trial_id_step: 2
           trial_id_count: 100
@@ -318,10 +317,9 @@ missingness_detection:
           zero_check: false
           gap_detection: false
           per_trial: true       # one .mp4 per trial
-          trial_id_start: 1     # all trials: 001, 002, …, 200
+          trial_duration_s: 20.0
+          trial_id_start: 1
           trial_id_step: 1
           trial_id_count: 200
           trial_id_format: "{:03d}"
-      # Lee et al. 2024 (Scientific Data) declares no missing data.
-      # We verify independently; expected result: all rows complete.
       known_missing: []

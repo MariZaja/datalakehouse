@@ -10,7 +10,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import numpy as np
 import pandas as pd
 import yaml
 from dotenv import load_dotenv
@@ -26,14 +25,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("silver_time_audit")
 
-NAN = float("nan")
-
 OUTPUT_COLUMNS = [
     "dataset", "participant_id", "unit_id", "signal_type", "device", "modality",
-    "sampling_rate_hz", "n_samples", "start_rel_s", "end_rel_s", "duration_s",
-    "expected_samples", "coverage_pct",
+    "start_rel_s", "end_rel_s", "duration_s",
 ]
-
 
 # File extractors
 
@@ -41,8 +36,7 @@ def extract_csv_timing(
     data: bytes,
     timestamp_col: str,
     timestamp_unit_ms: bool = False,
-) -> Optional[Dict[str, Any]]:
-
+) -> Optional[Dict[str, float]]:
     try:
         df = pd.read_csv(io.BytesIO(data), usecols=[timestamp_col])
         ts = df[timestamp_col].dropna().values.astype(float)
@@ -50,158 +44,66 @@ def extract_csv_timing(
             return None
         if timestamp_unit_ms:
             ts = ts / 1000.0
-        n = len(ts)
-        first_ts = float(ts[0])
-        last_ts = float(ts[-1])
-        if n > 1:
-            deltas = np.diff(ts)
-            median_delta = float(np.median(deltas))
-            measured_hz = 1.0 / median_delta if median_delta > 0 else NAN
-        else:
-            measured_hz = NAN
-        return {
-            "first_ts_s": first_ts,
-            "last_ts_s": last_ts,
-            "n_samples": n,
-            "measured_hz": measured_hz,
-        }
+        return {"first_ts_s": float(ts[0]), "last_ts_s": float(ts[-1])}
     except Exception as e:
         logger.warning("CSV timing extraction failed: %s", e)
         return None
 
 
-def extract_wav_metadata(data: bytes) -> Optional[Dict[str, Any]]:
+def extract_wav_duration(data: bytes) -> Optional[float]:
     try:
         import soundfile as sf
-        buf = io.BytesIO(data)
-        with sf.SoundFile(buf) as f:
-            sr = float(f.samplerate)
-            n_samples = int(f.frames)
-            duration_s = n_samples / sr if sr > 0 else NAN
-        return {"sampling_rate_hz": sr, "n_samples": n_samples, "duration_s": duration_s}
+        with sf.SoundFile(io.BytesIO(data)) as f:
+            return float(f.frames) / f.samplerate if f.samplerate > 0 else None
     except Exception as e:
-        logger.warning("WAV metadata extraction failed: %s", e)
+        logger.warning("WAV duration extraction failed: %s", e)
         return None
 
 
-def _mp4_find_box(
-    data: bytes, target: bytes, start: int = 0
-) -> Tuple[int, int]:
+def extract_mp4_duration(data: bytes) -> Optional[float]:
     import struct
-    i = start
-    while i + 8 <= len(data):
-        raw_size = struct.unpack_from(">I", data, i)[0]
-        btype = data[i + 4 : i + 8]
-        if raw_size == 1:
-            if i + 16 > len(data):
+
+    def _find_box(buf: bytes, target: bytes, start: int = 0) -> Tuple[int, int]:
+        i = start
+        while i + 8 <= len(buf):
+            raw = struct.unpack_from(">I", buf, i)[0]
+            btype = buf[i + 4:i + 8]
+            if raw == 1:
+                if i + 16 > len(buf):
+                    break
+                size, hdr = struct.unpack_from(">Q", buf, i + 8)[0], 16
+            elif raw == 0:
+                size, hdr = len(buf) - i, 8
+            else:
+                size, hdr = raw, 8
+            if size < 8:
                 break
-            size = struct.unpack_from(">Q", data, i + 8)[0]
-            hdr = 16
-        elif raw_size == 0:
-            size = len(data) - i
-            hdr = 8
+            if btype == target:
+                return i + hdr, i + size
+            i += size
+        return -1, -1
+
+    try:
+        moov_s, moov_e = _find_box(data, b"moov")
+        if moov_s == -1:
+            logger.warning("MP4: moov box not found")
+            return None
+        moov = data[moov_s:moov_e]
+        mvhd_s, mvhd_e = _find_box(moov, b"mvhd")
+        if mvhd_s == -1:
+            return None
+        payload = moov[mvhd_s:mvhd_e]
+        version = payload[0]
+        if version == 0:
+            timescale = struct.unpack_from(">I", payload, 12)[0]
+            duration = struct.unpack_from(">I", payload, 16)[0]
         else:
-            size = raw_size
-            hdr = 8
-        if size < 8:
-            break
-        if btype == target:
-            return i + hdr, i + size
-        i += size
-    return -1, -1
-
-
-def _mp4_read_fullbox_timescale_duration(payload: bytes) -> Tuple[int, int]:
-    import struct
-    version = payload[0]
-    if version == 0:
-        ts = struct.unpack_from(">I", payload, 12)[0]
-        dur = struct.unpack_from(">I", payload, 16)[0]
-    else:
-        ts = struct.unpack_from(">I", payload, 20)[0]
-        dur = struct.unpack_from(">Q", payload, 24)[0]
-    return ts, dur
-
-
-def extract_mp4_metadata(data: bytes) -> Optional[Dict[str, Any]]:
-    import struct
-
-    moov_s, moov_e = _mp4_find_box(data, b"moov")
-    if moov_s == -1:
-        logger.warning("MP4: moov box not found (%d bytes)", len(data))
+            timescale = struct.unpack_from(">I", payload, 20)[0]
+            duration = struct.unpack_from(">Q", payload, 24)[0]
+        return float(duration) / timescale if timescale > 0 else None
+    except Exception as e:
+        logger.warning("MP4 duration extraction failed: %s", e)
         return None
-    moov = data[moov_s:moov_e]
-
-    mvhd_s, mvhd_e = _mp4_find_box(moov, b"mvhd")
-    if mvhd_s == -1:
-        logger.warning("MP4: mvhd box not found in moov")
-        return None
-    movie_ts, movie_dur = _mp4_read_fullbox_timescale_duration(moov[mvhd_s:mvhd_e])
-    duration_s = float(movie_dur) / movie_ts if movie_ts > 0 else NAN
-
-    fps: Optional[float] = None
-    n_frames: Optional[int] = None
-
-    trak_cursor = 0
-    while True:
-        trak_s, trak_e = _mp4_find_box(moov, b"trak", trak_cursor)
-        if trak_s == -1:
-            break
-        trak = moov[trak_s:trak_e]
-        trak_cursor = trak_e
-
-        mdia_s, mdia_e = _mp4_find_box(trak, b"mdia")
-        if mdia_s == -1:
-            continue
-        mdia = trak[mdia_s:mdia_e]
-
-        hdlr_s, hdlr_e = _mp4_find_box(mdia, b"hdlr")
-        if hdlr_s == -1:
-            continue
-        hdlr = mdia[hdlr_s:hdlr_e]
-        if hdlr[8:12] != b"vide":
-            continue
-
-        mdhd_s, mdhd_e = _mp4_find_box(mdia, b"mdhd")
-        media_ts = 0
-        if mdhd_s != -1:
-            media_ts, _ = _mp4_read_fullbox_timescale_duration(mdia[mdhd_s:mdhd_e])
-
-        minf_s, minf_e = _mp4_find_box(mdia, b"minf")
-        if minf_s == -1:
-            break
-        minf = mdia[minf_s:minf_e]
-        stbl_s, stbl_e = _mp4_find_box(minf, b"stbl")
-        if stbl_s == -1:
-            break
-        stbl = minf[stbl_s:stbl_e]
-        stts_s, stts_e = _mp4_find_box(stbl, b"stts")
-        if stts_s == -1:
-            break
-        stts = stbl[stts_s:stts_e]
-        entry_count = struct.unpack_from(">I", stts, 4)[0]
-        total_samples = 0
-        total_delta = 0
-        off = 8
-        for _ in range(entry_count):
-            if off + 8 > len(stts):
-                break
-            sc = struct.unpack_from(">I", stts, off)[0]
-            sd = struct.unpack_from(">I", stts, off + 4)[0]
-            total_samples += sc
-            total_delta += sc * sd
-            off += 8
-        n_frames = total_samples
-        if total_delta > 0 and media_ts > 0:
-            fps = float(total_samples) / (float(total_delta) / media_ts)
-        break
-
-    if fps is None:
-        fps = NAN
-    if n_frames is None or n_frames == 0:
-        n_frames = int(fps * duration_s) if not np.isnan(fps) and not np.isnan(duration_s) else 0
-
-    return {"sampling_rate_hz": fps, "n_samples": n_frames, "duration_s": duration_s}
 
 
 def extract_mat_shape(data: bytes) -> Optional[Tuple[int, ...]]:
@@ -211,25 +113,18 @@ def extract_mat_shape(data: bytes) -> Optional[Tuple[int, ...]]:
             tmp.write(data)
             tmp_path = tmp.name
 
-        is_hdf5 = data[:8] == b"\x89HDF\r\n\x1a\n"
-
-        if is_hdf5:
+        if data[:8] == b"\x89HDF\r\n\x1a\n":
             import h5py
             with h5py.File(tmp_path, "r") as hf:
                 for key in hf.keys():
                     if not key.startswith("#"):
-                        shape = hf[key].shape
-                        return tuple(reversed(shape))
+                        return tuple(reversed(hf[key].shape))
             return None
 
         import scipy.io
         variables = scipy.io.whosmat(tmp_path)
-        data_vars = [(name, shape, dtype) for name, shape, dtype in variables
-                     if not name.startswith("_")]
-        if not data_vars:
-            return None
-        return data_vars[0][1]
-
+        data_vars = [(n, s, d) for n, s, d in variables if not n.startswith("_")]
+        return data_vars[0][1] if data_vars else None
     except Exception as e:
         logger.warning("MAT shape extraction failed: %s", e)
         return None
@@ -239,6 +134,7 @@ def extract_mat_shape(data: bytes) -> Optional[Tuple[int, ...]]:
 
 
 # MinIO helper
+
 def download_object(minio_client, bucket: str, key: str) -> Optional[bytes]:
     try:
         response = minio_client.get_object(bucket, key)
@@ -252,6 +148,7 @@ def download_object(minio_client, bucket: str, key: str) -> Optional[bytes]:
 
 
 # Row builder
+
 def make_row(
     dataset: str,
     participant_id: str,
@@ -259,27 +156,10 @@ def make_row(
     signal_type: str,
     device: str,
     modality: str,
-    sampling_rate_hz: Optional[float],
-    n_samples: int,
     start_rel_s: Optional[float],
     end_rel_s: Optional[float],
     duration_s: Optional[float],
 ) -> Dict[str, Any]:
-    sr = sampling_rate_hz if sampling_rate_hz is not None else NAN
-    dur = duration_s if duration_s is not None else NAN
-    start = start_rel_s if start_rel_s is not None else NAN
-    end = end_rel_s if end_rel_s is not None else NAN
-
-    if not (np.isnan(sr) or np.isnan(dur)) and sr > 0 and dur > 0:
-        expected = sr * dur
-    else:
-        expected = NAN
-
-    if not np.isnan(expected) and expected > 0:
-        coverage = (n_samples / expected) * 100.0
-    else:
-        coverage = NAN
-
     return {
         "dataset": dataset,
         "participant_id": participant_id,
@@ -287,17 +167,14 @@ def make_row(
         "signal_type": signal_type,
         "device": device,
         "modality": modality,
-        "sampling_rate_hz": None if np.isnan(sr) else sr,
-        "n_samples": n_samples,
-        "start_rel_s": None if np.isnan(start) else start,
-        "end_rel_s": None if np.isnan(end) else end,
-        "duration_s": None if np.isnan(dur) else dur,
-        "expected_samples": None if np.isnan(expected) else int(round(expected)),
-        "coverage_pct": None if np.isnan(coverage) else coverage,
+        "start_rel_s": start_rel_s,
+        "end_rel_s": end_rel_s,
+        "duration_s": duration_s,
     }
 
 
-# K-EmoCon dataset audit
+# K-EmoCon
+
 def load_kemocon_subjects(
     minio_client, bucket: str, path: str
 ) -> Dict[int, Dict[str, int]]:
@@ -310,7 +187,6 @@ def load_kemocon_subjects(
     for _, row in df.iterrows():
         pid = int(row["pid"])
         result[pid] = {
-            "initTime": int(row["initTime"]),
             "startTime": int(row["startTime"]),
             "endTime": int(row["endTime"]),
         }
@@ -318,7 +194,6 @@ def load_kemocon_subjects(
 
 
 def _pid_from_entity_id(entity_id: str) -> int:
-    """e01 → 1, e02 → 2, ..."""
     return int(entity_id[1:])
 
 
@@ -353,73 +228,52 @@ def audit_kemocon_entity(
                 data = download_object(minio_client, bucket, key)
                 if data is None:
                     continue
-                meta = extract_csv_timing(data, timestamp_col, timestamp_unit_ms)
-                if meta is None:
-                    logger.warning("[K-EmoCon] [%s] No timing extracted from %s", entity_id, filename)
+                timing = extract_csv_timing(data, timestamp_col, timestamp_unit_ms)
+                if timing is None:
+                    logger.warning("[K-EmoCon] [%s] No timing from %s", entity_id, filename)
                     continue
 
                 if start_time_s is not None:
-                    s_rel = meta["first_ts_s"] - start_time_s
-                    e_rel = meta["last_ts_s"] - start_time_s
+                    s_rel = timing["first_ts_s"] - start_time_s
+                    e_rel = timing["last_ts_s"] - start_time_s
                 else:
                     s_rel = e_rel = None
-
-                dur = (meta["last_ts_s"] - meta["first_ts_s"]) if meta["n_samples"] > 1 else 0.0
+                duration = timing["last_ts_s"] - timing["first_ts_s"]
 
                 rows.append(make_row(
-                    dataset=dataset_label,
-                    participant_id=entity_id,
-                    unit_id=entity_id,
-                    signal_type=sig["signal_type"],
-                    device=sig["device"],
-                    modality=sig["modality"],
-                    sampling_rate_hz=sig.get("declared_hz") or meta["measured_hz"],
-                    n_samples=meta["n_samples"],
-                    start_rel_s=s_rel,
-                    end_rel_s=e_rel,
-                    duration_s=dur,
+                    dataset_label, entity_id, entity_id,
+                    sig["signal_type"], sig["device"], sig["modality"],
+                    s_rel, e_rel, duration,
                 ))
 
             elif filename.endswith(".wav"):
                 data = download_object(minio_client, bucket, key)
                 if data is None:
                     continue
-                meta = extract_wav_metadata(data)
-                if meta is None:
+                duration = extract_wav_duration(data)
+                if duration is None:
                     continue
                 rows.append(make_row(
-                    dataset=dataset_label,
-                    participant_id=entity_id,
-                    unit_id=entity_id,
-                    signal_type=audio_sig.get("signal_type", "audio"),
-                    device=audio_sig.get("device", "unknown"),
-                    modality=audio_sig.get("modality", "audio"),
-                    sampling_rate_hz=meta["sampling_rate_hz"],
-                    n_samples=meta["n_samples"],
-                    start_rel_s=0.0,
-                    end_rel_s=meta["duration_s"],
-                    duration_s=meta["duration_s"],
+                    dataset_label, entity_id, entity_id,
+                    audio_sig.get("signal_type", "audio"),
+                    audio_sig.get("device", "unknown"),
+                    audio_sig.get("modality", "audio"),
+                    0.0, duration, duration,
                 ))
 
             elif filename.endswith(".mp4"):
                 data = download_object(minio_client, bucket, key)
                 if data is None:
                     continue
-                meta = extract_mp4_metadata(data)
-                if meta is None:
+                duration = extract_mp4_duration(data)
+                if duration is None:
                     continue
                 rows.append(make_row(
-                    dataset=dataset_label,
-                    participant_id=entity_id,
-                    unit_id=entity_id,
-                    signal_type=video_sig.get("signal_type", "video"),
-                    device=video_sig.get("device", "unknown"),
-                    modality=video_sig.get("modality", "video"),
-                    sampling_rate_hz=meta["sampling_rate_hz"],
-                    n_samples=meta["n_samples"],
-                    start_rel_s=0.0,
-                    end_rel_s=meta["duration_s"],
-                    duration_s=meta["duration_s"],
+                    dataset_label, entity_id, entity_id,
+                    video_sig.get("signal_type", "video"),
+                    video_sig.get("device", "unknown"),
+                    video_sig.get("modality", "video"),
+                    0.0, duration, duration,
                 ))
 
             elif filename.endswith(".csv"):
@@ -431,7 +285,8 @@ def audit_kemocon_entity(
     return rows
 
 
-# EAV dataset audit
+# EAV
+
 def _extract_trial_id(filename: str, pattern: str) -> str:
     m = re.match(pattern, filename)
     return m.group(1) if m else Path(filename).stem
@@ -462,8 +317,7 @@ def audit_eav_entity(
 
         try:
             if filename.endswith(".mat"):
-                stem = Path(filename).stem
-                if stem.endswith(label_suffix):
+                if Path(filename).stem.endswith(label_suffix):
                     logger.debug("[EAV] [%s] Skipping label file: %s", entity_id, filename)
                     continue
 
@@ -472,13 +326,8 @@ def audit_eav_entity(
                     continue
 
                 shape = extract_mat_shape(data)
-                if shape is None:
+                if shape is None or len(shape) < 2:
                     logger.warning("[EAV] [%s] Cannot extract shape from %s", entity_id, filename)
-                    continue
-
-                if len(shape) < 2:
-                    logger.warning("[EAV] [%s] Unexpected MAT shape %s in %s — skipping",
-                                   entity_id, shape, filename)
                     continue
 
                 if len(shape) == 3:
@@ -486,7 +335,7 @@ def audit_eav_entity(
                     n_instances = shape[instances_axis]
                 elif len(shape) == 2:
                     n_instances = 1
-                    n_timepoints = shape[0] if shape[0] > shape[1] else shape[1]
+                    n_timepoints = max(shape)
                 else:
                     n_instances = 1
                     n_timepoints = shape[0]
@@ -499,61 +348,43 @@ def audit_eav_entity(
 
                 for i in range(n_instances):
                     rows.append(make_row(
-                        dataset=dataset_label,
-                        participant_id=entity_id,
-                        unit_id=f"{i:03d}",
-                        signal_type=eeg_sig.get("signal_type", "eeg"),
-                        device=eeg_sig.get("device", "BrainAmp"),
-                        modality=eeg_sig.get("modality", "eeg"),
-                        sampling_rate_hz=declared_eeg_hz,
-                        n_samples=n_timepoints,
-                        start_rel_s=0.0,
-                        end_rel_s=duration_per_instance,
-                        duration_s=duration_per_instance,
+                        dataset_label, entity_id, f"{i:03d}",
+                        eeg_sig.get("signal_type", "eeg"),
+                        eeg_sig.get("device", "BrainAmp"),
+                        eeg_sig.get("modality", "eeg"),
+                        0.0, duration_per_instance, duration_per_instance,
                     ))
 
             elif filename.endswith(".wav"):
                 data = download_object(minio_client, bucket, key)
                 if data is None:
                     continue
-                meta = extract_wav_metadata(data)
-                if meta is None:
+                duration = extract_wav_duration(data)
+                if duration is None:
                     continue
                 trial_id = _extract_trial_id(filename, trial_id_pattern)
                 rows.append(make_row(
-                    dataset=dataset_label,
-                    participant_id=entity_id,
-                    unit_id=trial_id,
-                    signal_type=audio_sig.get("signal_type", "audio"),
-                    device=audio_sig.get("device", "microphone"),
-                    modality=audio_sig.get("modality", "audio"),
-                    sampling_rate_hz=meta["sampling_rate_hz"],
-                    n_samples=meta["n_samples"],
-                    start_rel_s=0.0,
-                    end_rel_s=meta["duration_s"],
-                    duration_s=meta["duration_s"],
+                    dataset_label, entity_id, trial_id,
+                    audio_sig.get("signal_type", "audio"),
+                    audio_sig.get("device", "microphone"),
+                    audio_sig.get("modality", "audio"),
+                    0.0, duration, duration,
                 ))
 
             elif filename.endswith(".mp4"):
                 data = download_object(minio_client, bucket, key)
                 if data is None:
                     continue
-                meta = extract_mp4_metadata(data)
-                if meta is None:
+                duration = extract_mp4_duration(data)
+                if duration is None:
                     continue
                 trial_id = _extract_trial_id(filename, trial_id_pattern)
                 rows.append(make_row(
-                    dataset=dataset_label,
-                    participant_id=entity_id,
-                    unit_id=trial_id,
-                    signal_type=video_sig.get("signal_type", "video"),
-                    device=video_sig.get("device", "webcam"),
-                    modality=video_sig.get("modality", "video"),
-                    sampling_rate_hz=meta["sampling_rate_hz"],
-                    n_samples=meta["n_samples"],
-                    start_rel_s=0.0,
-                    end_rel_s=meta["duration_s"],
-                    duration_s=meta["duration_s"],
+                    dataset_label, entity_id, trial_id,
+                    video_sig.get("signal_type", "video"),
+                    video_sig.get("device", "webcam"),
+                    video_sig.get("modality", "video"),
+                    0.0, duration, duration,
                 ))
 
         except Exception as e:
@@ -562,8 +393,9 @@ def audit_eav_entity(
     return rows
 
 
+# Grouping helper
+
 def _group_objects_by_entity(minio_client, bucket: str, prefix: str) -> Dict[str, List[Any]]:
-    """List all objects under prefix and group them by entity_id."""
     entity_objects: Dict[str, List[Any]] = {}
     full_prefix = prefix.rstrip("/") + "/"
     for obj in minio_client.list_objects(bucket, prefix=full_prefix, recursive=True):
@@ -575,16 +407,16 @@ def _group_objects_by_entity(minio_client, bucket: str, prefix: str) -> Dict[str
     return entity_objects
 
 
+# Orchestration
+
 def run_time_audit(
     minio_client,
     silver_bucket: str,
-    bronze_bucket: str,
     ta_cfg: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
     all_rows: List[Dict[str, Any]] = []
     datasets_cfg = ta_cfg.get("datasets", {})
 
-    # --- K-EmoCon ---
     kemocon_cfg = datasets_cfg.get("kemocon")
     if kemocon_cfg:
         logger.info("=== Auditing K-EmoCon ===")
@@ -593,12 +425,12 @@ def run_time_audit(
             kemocon_cfg["subjects_bucket"],
             kemocon_cfg["subjects_path"],
         )
-        logger.info("Loaded K-EmoCon subjects.csv: %d participants", len(subjects_map))
+        logger.info("K-EmoCon subjects loaded: %d", len(subjects_map))
 
         entity_objects = _group_objects_by_entity(
             minio_client, silver_bucket, kemocon_cfg["silver_files_prefix"]
         )
-        logger.info("K-EmoCon entities found: %d", len(entity_objects))
+        logger.info("K-EmoCon entities: %d", len(entity_objects))
 
         for entity_id in sorted(entity_objects):
             logger.info("[K-EmoCon] Auditing %s (%d files)", entity_id, len(entity_objects[entity_id]))
@@ -609,14 +441,13 @@ def run_time_audit(
             logger.info("[K-EmoCon] [%s] → %d rows", entity_id, len(rows))
             all_rows.extend(rows)
 
-    # --- EAV ---
     eav_cfg = datasets_cfg.get("eav")
     if eav_cfg:
         logger.info("=== Auditing EAV ===")
         entity_objects = _group_objects_by_entity(
             minio_client, silver_bucket, eav_cfg["silver_files_prefix"]
         )
-        logger.info("EAV entities found: %d", len(entity_objects))
+        logger.info("EAV entities: %d", len(entity_objects))
 
         for entity_id in sorted(entity_objects):
             logger.info("[EAV] Auditing %s (%d files)", entity_id, len(entity_objects[entity_id]))
@@ -630,7 +461,8 @@ def run_time_audit(
     return all_rows
 
 
-# Output helpers
+# ── Output ────────────────────────────────────────────────────────────────────
+
 def upload_csv(minio_client, bucket: str, key: str, df: pd.DataFrame) -> None:
     csv_bytes = df.to_csv(index=False).encode("utf-8")
     minio_client.put_object(
@@ -642,7 +474,7 @@ def upload_csv(minio_client, bucket: str, key: str, df: pd.DataFrame) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Silver — Step 2: Time Audit.")
+    parser = argparse.ArgumentParser(description="Silver — Step 02: Time Audit.")
     parser.add_argument("--config", default="pipeline_config.yaml", help="Path to YAML config.")
     return parser.parse_args()
 
@@ -656,12 +488,11 @@ def main() -> None:
     minio_client, _ = project_config.config()
 
     silver_bucket = cfg["bucket_silver"]
-    bronze_bucket = cfg["bucket"]
     ta_cfg = cfg.get("time_audit", {})
 
     logger.info("Starting Silver — Step 02: Time Audit")
 
-    rows = run_time_audit(minio_client, silver_bucket, bronze_bucket, ta_cfg)
+    rows = run_time_audit(minio_client, silver_bucket, ta_cfg)
 
     if not rows:
         logger.error("No rows produced — check logs for errors.")
@@ -670,12 +501,11 @@ def main() -> None:
     df = pd.DataFrame(rows, columns=OUTPUT_COLUMNS)
     logger.info("Total rows: %d", len(df))
 
-    # Upload to MinIO
     output_prefix = ta_cfg.get("output_prefix", "02_time_audit/metadata")
     output_filename = ta_cfg.get("output_filename", "time_audit.csv")
     minio_key = f"{output_prefix.rstrip('/')}/{output_filename}"
     upload_csv(minio_client, silver_bucket, minio_key, df)
-    logger.info("Uploaded to MinIO: %s/%s", silver_bucket, minio_key)
+    logger.info("Uploaded: %s/%s", silver_bucket, minio_key)
 
     logger.info("Time Audit complete.")
 
