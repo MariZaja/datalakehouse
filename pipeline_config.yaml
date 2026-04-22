@@ -249,6 +249,18 @@ missingness_detection:
           filename: "BrainWave.csv"
           zero_check: false
           gap_detection: true
+        - signal_type: "Attention"
+          device: "NeuroSky"
+          modality: "eeg"
+          filename: "Attention.csv"
+          zero_check: false
+          gap_detection: true
+        - signal_type: "Meditation"
+          device: "NeuroSky"
+          modality: "eeg"
+          filename: "Meditation.csv"
+          zero_check: false
+          gap_detection: true
         - signal_type: "Polar_HR"
           device: "Polar H7"
           modality: "physio"
@@ -267,48 +279,9 @@ missingness_detection:
           ext: ".mp4"
           zero_check: false
           gap_detection: false
-      # Known missing documented in Park et al. 2020 (Scientific Data)
-      known_missing:
-        - participants: ["e02", "e03", "e06", "e07"]
-          signals: ["E4_BVP", "E4_EDA", "E4_ACC", "E4_HR", "E4_IBI", "E4_TEMP"]
-          scope: "total"
-          reason: "E4 device failure during data collection (Park et al. 2020)"
-        - participants: ["e26"]
-          signals: ["E4_IBI"]
-          scope: "total"
-          reason: "E4 internal algorithm rejected IBI as unreliable (Park et al. 2020)"
-        - participants: ["e17", "e20"]
-          signals: ["E4_EDA"]
-          scope: "total"
-          reason: "Likely poor sensor-skin contact (Park et al. 2020)"
-        - participants: ["e01", "e20"]
-          signals: ["BrainWave"]
-          scope: "total"
-          reason: "Faulty NeuroSky device (Park et al. 2020)"
-        - participants: ["e19"]
-          signals: ["BrainWave"]
-          scope: "partial"
-          approx_missing_pct: 32.0
-          reason: "Faulty NeuroSky device (Park et al. 2020)"
-        - participants: ["e22"]
-          signals: ["BrainWave"]
-          scope: "partial"
-          approx_missing_pct: 59.0
-          reason: "Faulty NeuroSky device (Park et al. 2020)"
-        - participants: ["e23"]
-          signals: ["BrainWave"]
-          scope: "partial"
-          approx_missing_pct: 36.0
-          reason: "Faulty NeuroSky device (Park et al. 2020)"
-        - participants: ["e03", "e12", "e18", "e20", "e21", "e29", "e30"]
-          signals: ["Polar_HR"]
-          scope: "total"
-          reason: "Polar H7 device error during data collection (Park et al. 2020)"
-        - participants: ["e04", "e22"]
-          signals: ["Polar_HR"]
-          scope: "partial"
-          approx_missing_pct: 38.0
-          reason: "Poor Polar H7 sensor contact (Park et al. 2020)"
+      data_availability_key: "01_entity_resolution/k-emocon/auxiliary/metadata/metadata/data_availability.csv"
+      e4_completeness_key: "01_entity_resolution/k-emocon/auxiliary/quality/data_quality_tables/e4_completeness.csv"
+      neuro_polar_completeness_key: "01_entity_resolution/k-emocon/auxiliary/quality/data_quality_tables/neuro_polar_completeness.csv"
 
     eav:
       dataset_label: "EAV"

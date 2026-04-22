@@ -38,8 +38,25 @@ MIN_ZERO_RUN_WAV = 2205
 OUTPUT_COLUMNS = [
     "dataset", "participant_id", "unit_id", "signal_type", "device", "modality",
     "status", "expected_samples", "actual_samples", "missing_samples", "missing_pct",
-    "known_in_literature",
+    "known_in_literature", "literature_missing_pct",
 ]
+
+# Signal name mappings: auxiliary CSV column → signal_type used in pipeline
+AVAILABILITY_COL_TO_SIGNAL: Dict[str, str] = {
+    "E4_ACC": "E4_ACC", "E4_BVP": "E4_BVP", "E4_EDA": "E4_EDA",
+    "E4_HR": "E4_HR", "E4_IBI": "E4_IBI", "E4_TEMP": "E4_TEMP",
+    "BrainWave": "BrainWave", "Attention": "Attention", "Meditation": "Meditation",
+    "Polar_HR": "Polar_HR",
+    "debate_audio": "audio", "debate_recording": "video",
+}
+E4_COMPLETENESS_COL_TO_SIGNAL: Dict[str, str] = {
+    "ACC": "E4_ACC", "BVP": "E4_BVP", "EDA": "E4_EDA",
+    "HR": "E4_HR", "IBI": "E4_IBI", "TEMP": "E4_TEMP",
+}
+NEURO_POLAR_COMPLETENESS_COL_TO_SIGNAL: Dict[str, str] = {
+    "BrainWave": "BrainWave", "Attention": "Attention", "Meditation": "Meditation",
+    "Polar_HR": "Polar_HR",
+}
 
 
 # MinIO helpers
@@ -363,10 +380,13 @@ def make_miss_row(
     expected_samples: Optional[int],
     actual_samples: int,
     known_in_literature: bool,
+    literature_missing_pct: Optional[float] = None,
 ) -> Dict[str, Any]:
     exp = expected_samples if expected_samples is not None else 0
     missing = max(0, exp - actual_samples) if exp > 0 else 0
     missing_pct = round((missing / exp) * 100.0, 4) if exp > 0 else 0.0
+    if literature_missing_pct is not None and missing_pct > literature_missing_pct:
+        known_in_literature = False
     return {
         "dataset": dataset,
         "participant_id": participant_id,
@@ -380,6 +400,7 @@ def make_miss_row(
         "missing_samples": missing,
         "missing_pct": missing_pct,
         "known_in_literature": known_in_literature or (status == "complete"),
+        "literature_missing_pct": literature_missing_pct,
     }
 
 
@@ -392,10 +413,12 @@ def _total_missing_row(
     modality: str,
     expected_samples: Optional[int],
     known_in_literature: bool,
+    literature_missing_pct: Optional[float] = None,
 ) -> Dict[str, Any]:
     return make_miss_row(
         dataset, participant_id, unit_id, signal_type, device, modality,
         "total_missing", expected_samples, 0, known_in_literature,
+        literature_missing_pct,
     )
 
 
@@ -413,6 +436,71 @@ def build_known_missing_lookup(known_cfg: List[Dict]) -> Dict[Tuple[str, str], D
                     "approx_missing_pct": entry.get("approx_missing_pct"),
                 }
     return lookup
+
+
+# Auxiliary-file based known-missing / completeness loaders (K-EmoCon)
+
+def load_data_availability(
+    minio_client, bucket: str, key: str,
+) -> Dict[Tuple[str, str], bool]:
+    data = download_object(minio_client, bucket, key)
+    if data is None:
+        logger.warning("Could not load data_availability from %s/%s — known_in_literature will be False for all", bucket, key)
+        return {}
+    df = pd.read_csv(io.BytesIO(data))
+    absent: Dict[Tuple[str, str], bool] = {}
+    for _, row in df.iterrows():
+        try:
+            pid = int(row["pid"])
+        except (KeyError, ValueError):
+            continue
+        entity_id = f"e{pid:02d}"
+        for col, signal_type in AVAILABILITY_COL_TO_SIGNAL.items():
+            if col not in row.index:
+                continue
+            if str(row[col]).strip().upper() == "FALSE":
+                absent[(entity_id, signal_type)] = True
+    logger.info("data_availability: %d (entity, signal) pairs known absent", len(absent))
+    return absent
+
+
+def load_completeness_tables(
+    minio_client, bucket: str, e4_key: str, neuro_key: str,
+) -> Dict[Tuple[str, str], float]:
+    """Read e4_completeness.csv + neuro_polar_completeness.csv →
+    (entity_id, signal_type) → literature_missing_pct (0–100).
+
+    Rows are positional (row i = participant i, 1-indexed).
+    n/a  → 100.0 (file totally absent).
+    ratio r → (1 - r) * 100.
+    """
+    result: Dict[Tuple[str, str], float] = {}
+
+    def _load_one(key: str, col_map: Dict[str, str]) -> None:
+        data = download_object(minio_client, bucket, key)
+        if data is None:
+            logger.warning("Could not load completeness table from %s/%s", bucket, key)
+            return
+        df = pd.read_csv(io.BytesIO(data))
+        for i, (_, row) in enumerate(df.iterrows(), start=1):
+            entity_id = f"e{i:02d}"
+            for col, signal_type in col_map.items():
+                if col not in row.index:
+                    continue
+                val = str(row[col]).strip().lower()
+                if val == "n/a":
+                    result[(entity_id, signal_type)] = 100.0
+                else:
+                    try:
+                        ratio = float(val)
+                        result[(entity_id, signal_type)] = round((1.0 - ratio) * 100.0, 4)
+                    except ValueError:
+                        pass
+
+    _load_one(e4_key, E4_COMPLETENESS_COL_TO_SIGNAL)
+    _load_one(neuro_key, NEURO_POLAR_COMPLETENESS_COL_TO_SIGNAL)
+    logger.info("completeness tables: %d (entity, signal) literature_missing_pct values", len(result))
+    return result
 
 
 # time_audit.csv lookup
@@ -459,11 +547,23 @@ def audit_kemocon_missingness(
     timestamp_col = ds_cfg.get("timestamp_col", "timestamp")
     ts_unit_ms = ds_cfg.get("timestamp_unit_ms", False)
     expected_signals: List[Dict] = ds_cfg.get("expected_signals", [])
-    known_lookup = build_known_missing_lookup(ds_cfg.get("known_missing", []))
     ta_lookup = build_ta_lookup(ta_df[ta_df["dataset"] == dataset_label])
 
-    # All expected participants: those with files + those in known_missing
-    known_pids = {pid for (pid, _) in known_lookup.keys()}
+    # Load known-missingness and literature completeness from auxiliary files
+    avail_key = ds_cfg.get("data_availability_key")
+    e4_comp_key = ds_cfg.get("e4_completeness_key")
+    neuro_comp_key = ds_cfg.get("neuro_polar_completeness_key")
+
+    known_absent: Dict[Tuple[str, str], bool] = {}
+    completeness_lookup: Dict[Tuple[str, str], float] = {}
+
+    if avail_key:
+        known_absent = load_data_availability(minio_client, bucket, avail_key)
+    if e4_comp_key and neuro_comp_key:
+        completeness_lookup = load_completeness_tables(minio_client, bucket, e4_comp_key, neuro_comp_key)
+
+    # All expected participants: those with files + those known absent in any signal
+    known_pids = {pid for (pid, _) in known_absent.keys()}
     all_pids = sorted(set(entity_objects.keys()) | known_pids)
     logger.info("[K-EmoCon] Total participants to audit: %d", len(all_pids))
 
@@ -487,8 +587,13 @@ def audit_kemocon_missingness(
             unit_id = entity_id  # K-EmoCon: one session per participant
             do_zero = sig.get("zero_check", False)
             do_gaps = sig.get("gap_detection", True)
-            known_info = known_lookup.get((entity_id, signal_type), {})
-            known_lit = bool(known_info)
+
+            lit_missing_pct: Optional[float] = completeness_lookup.get((entity_id, signal_type))
+            known_lit = (
+                (entity_id, signal_type) in known_absent
+                or (lit_missing_pct is not None and lit_missing_pct > 0)
+            )
+
             ta_key = (dataset_label, entity_id, unit_id, signal_type)
             expected_samples = ta_lookup.get(ta_key)
 
@@ -509,7 +614,7 @@ def audit_kemocon_missingness(
                     )
                 rows.append(_total_missing_row(
                     dataset_label, entity_id, unit_id, signal_type, device, modality,
-                    expected_samples, known_lit,
+                    expected_samples, known_lit, lit_missing_pct,
                 ))
                 logger.info("[K-EmoCon] [%s] %-12s → total_missing%s",
                             entity_id, signal_type, " (known)" if known_lit else "")
@@ -519,7 +624,7 @@ def audit_kemocon_missingness(
             if data is None:
                 rows.append(_total_missing_row(
                     dataset_label, entity_id, unit_id, signal_type, device, modality,
-                    expected_samples, known_lit,
+                    expected_samples, known_lit, lit_missing_pct,
                 ))
                 continue
 
@@ -547,7 +652,7 @@ def audit_kemocon_missingness(
                              entity_id, signal_type, obj.object_name, scan["error"])
                 rows.append(_total_missing_row(
                     dataset_label, entity_id, unit_id, signal_type, device, modality,
-                    expected_samples, known_lit,
+                    expected_samples, known_lit, lit_missing_pct,
                 ))
                 continue
 
@@ -564,7 +669,7 @@ def audit_kemocon_missingness(
 
             rows.append(make_miss_row(
                 dataset_label, entity_id, unit_id, signal_type, device, modality,
-                status, expected_samples, actual_samples, known_lit,
+                status, expected_samples, actual_samples, known_lit, lit_missing_pct,
             ))
 
             if status == "partial_missing" and gap_list:

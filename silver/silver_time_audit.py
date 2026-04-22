@@ -373,7 +373,7 @@ def audit_kemocon_entity(
                     signal_type=sig["signal_type"],
                     device=sig["device"],
                     modality=sig["modality"],
-                    sampling_rate_hz=meta["measured_hz"],
+                    sampling_rate_hz=sig.get("declared_hz") or meta["measured_hz"],
                     n_samples=meta["n_samples"],
                     start_rel_s=s_rel,
                     end_rel_s=e_rel,
