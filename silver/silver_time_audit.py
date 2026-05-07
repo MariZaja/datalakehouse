@@ -308,6 +308,7 @@ def audit_eav_entity(
     declared_eeg_hz = float(eeg_sig.get("declared_hz", 500.0))
     timepoints_axis = int(eeg_sig.get("timepoints_axis", 0))
     instances_axis = int(eeg_sig.get("instances_axis", 2))
+    min_mat_size_bytes = int(eeg_sig.get("min_size_bytes", 0))
 
     rows = []
 
@@ -319,6 +320,13 @@ def audit_eav_entity(
             if filename.endswith(".mat"):
                 if Path(filename).stem.endswith(label_suffix):
                     logger.debug("[EAV] [%s] Skipping label file: %s", entity_id, filename)
+                    continue
+
+                if min_mat_size_bytes > 0 and obj.size < min_mat_size_bytes:
+                    logger.error(
+                        "[EAV] [%s] MAT file too small: %s (%d bytes < %d) — likely corrupt",
+                        entity_id, filename, obj.size, min_mat_size_bytes,
+                    )
                     continue
 
                 data = download_object(minio_client, bucket, key)

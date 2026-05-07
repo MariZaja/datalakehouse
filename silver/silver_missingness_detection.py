@@ -640,6 +640,7 @@ def audit_eav_missingness(
                 declared_eeg_hz = float(sig.get("declared_hz", 500.0))
                 expected_instances = sig.get("expected_instances", 30)
                 expected_timepoints: Optional[int] = sig.get("expected_timepoints")
+                min_mat_size_bytes = int(sig.get("min_size_bytes", 0))
 
                 if not mat_objs:
                     for i in range(expected_instances):
@@ -650,7 +651,20 @@ def audit_eav_missingness(
                     logger.info("[EAV] [%s] eeg → total_missing (mat absent)", entity_id)
                     continue
 
-                file_data = download_object(minio_client, bucket, mat_objs[0].object_name)
+                mat_obj = mat_objs[0]
+                if min_mat_size_bytes > 0 and mat_obj.size < min_mat_size_bytes:
+                    logger.error(
+                        "[EAV] [%s] MAT file too small: %d bytes (< %d) — likely corrupt",
+                        entity_id, mat_obj.size, min_mat_size_bytes,
+                    )
+                    for i in range(expected_instances):
+                        rows.append(make_miss_row(
+                            dataset_label, entity_id, f"{i:03d}", signal_type, device, modality,
+                            "size_anomaly", declared_eeg_hz, expected_timepoints, 0, known_lit,
+                        ))
+                    continue
+
+                file_data = download_object(minio_client, bucket, mat_obj.object_name)
                 if file_data is None:
                     for i in range(expected_instances):
                         rows.append(_total_missing_row(
