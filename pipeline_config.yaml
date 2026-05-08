@@ -46,7 +46,7 @@ datasets:
 
 # Silver — Step 02: Time Audit
 time_audit:
-  output_prefix: "02_time_audit/metadata"
+  output_prefix: "02_time_audit"
   output_filename: "time_audit.csv"
 
   datasets:
@@ -56,6 +56,8 @@ time_audit:
       silver_files_prefix: "01_entity_resolution/k-emocon/files"
       timestamp_col: "timestamp"
       timestamp_unit_ms: true
+      subjects_bucket: "silver"
+      subjects_path: "01_entity_resolution/k-emocon/auxiliary/metadata/metadata/subjects.csv"
       signals:
         "E4_BVP.csv":
           signal_type: "E4_BVP"
