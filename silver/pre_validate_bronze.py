@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import yaml
 from dotenv import load_dotenv
 from pyspark.sql.functions import countDistinct

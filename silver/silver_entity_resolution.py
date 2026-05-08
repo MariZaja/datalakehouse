@@ -7,10 +7,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import yaml
 from dotenv import load_dotenv
 from pyspark.sql import Row
-from pyspark.sql.functions import current_timestamp
+from pyspark.sql.functions import col, concat, current_timestamp, lit, when
 
 import config as project_config
 
@@ -302,6 +304,90 @@ def transform_dataset(
     return results
 
 
+# Phase 2b — auxiliary copy
+def copy_auxiliary(
+    minio_client,
+    spark,
+    bronze_bucket: str,
+    silver_bucket: str,
+    dataset: str,
+    dcfg: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    results = []
+    bronze_aux_prefix = f"{dcfg['base_prefix']}/auxiliary/"
+    silver_aux_prefix = f"{dcfg['silver_base_prefix']}/auxiliary/"
+
+    copied = 0
+    errors = []
+
+    for obj in minio_client.list_objects(bronze_bucket, prefix=bronze_aux_prefix, recursive=True):
+        src_key = obj.object_name
+        relative = src_key[len(bronze_aux_prefix):]
+        dst_key = silver_aux_prefix + relative
+        try:
+            copy_object(minio_client, bronze_bucket, src_key, silver_bucket, dst_key)
+            copied += 1
+        except Exception as e:
+            errors.append(f"Copy failed {src_key} → {dst_key}: {e}")
+
+    if errors:
+        results.append(_fail(
+            "copy_auxiliary_files", dataset,
+            f"Copied {copied} auxiliary file(s) with {len(errors)} error(s).",
+            errors[:20],
+        ))
+        return results
+
+    if copied == 0:
+        logger.info("[%s] No auxiliary files found — skipping.", dataset)
+        results.append(_pass("copy_auxiliary_files", dataset, "No auxiliary files found — skipped."))
+        return results
+
+    results.append(_pass("copy_auxiliary_files", dataset, f"Copied {copied} auxiliary file(s) to Silver."))
+
+    aux_table = dcfg.get("aux_table")
+    if not aux_table:
+        results.append(_pass("write_silver_aux_delta", dataset, "No aux_table configured — skipped."))
+        return results
+
+    try:
+        bronze_df = spark.read.format("delta").load(_s3a(bronze_bucket, aux_table))
+
+        bronze_aux_base = f"s3://{bronze_bucket}/{dcfg['base_prefix']}/auxiliary"
+        silver_aux_base = f"s3://{silver_bucket}/{dcfg['silver_base_prefix']}/auxiliary"
+        len_prefix = len(bronze_aux_base)
+
+        silver_df = bronze_df.withColumn(
+            "source_path",
+            when(
+                col("source_path").startswith(bronze_aux_base),
+                concat(lit(silver_aux_base), col("source_path").substr(len_prefix + 1, 10_000)),
+            ).otherwise(col("source_path")),
+        )
+
+        silver_aux_table = f"{dcfg['silver_base_prefix']}/delta/auxiliary_metadata"
+
+        (
+            silver_df
+            .withColumn("ingest_ts", current_timestamp())
+            .write
+            .format("delta")
+            .mode("overwrite")
+            .save(_s3a(silver_bucket, silver_aux_table))
+        )
+
+        count = bronze_df.count()
+        results.append(_pass(
+            "write_silver_aux_delta", dataset,
+            f"Silver aux Delta table written: {silver_aux_table} ({count} records).",
+        ))
+
+    except Exception as e:
+        results.append(_fail("write_silver_aux_delta", dataset, f"Cannot write Silver aux Delta: {e}"))
+
+    return results
+
+
 # Phase 3 — post-audit validation
 def validate_post_transform(
     minio_client,
@@ -335,10 +421,11 @@ def validate_post_transform(
 def build_report(
     phase1_audits: List[Dict[str, Any]],
     transform_results: List[Dict[str, Any]],
+    auxiliary_results: List[Dict[str, Any]],
     phase3_audits: List[Dict[str, Any]],
     phase3_results: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    all_checks = transform_results + phase3_results
+    all_checks = transform_results + auxiliary_results + phase3_results
     fails = [r for r in all_checks if r["status"] == "FAIL"]
     overall = "FAIL" if fails else "PASS"
     return {
@@ -353,6 +440,7 @@ def build_report(
         },
         "phase1_id_audit_before": phase1_audits,
         "phase2_transform": transform_results,
+        "phase2_auxiliary": auxiliary_results,
         "phase3_id_audit_after": phase3_audits,
         "phase3_validation": phase3_results,
     }
@@ -389,14 +477,18 @@ def main() -> None:
     bronze_bucket = cfg["bucket"]
     silver_bucket = cfg["bucket_silver"]
 
+    common = cfg["datasets"].get("common", {})
+    datasets = {k: {**common, **v} for k, v in cfg["datasets"].items() if k != "common"}
+
     phase1_audits = []
     transform_results = []
+    auxiliary_results = []
     phase3_audits = []
     phase3_results = []
 
     logger.info("PHASE 1 — ID Audit (Bronze, before transformation)")
 
-    for dataset, dcfg in cfg["datasets"].items():
+    for dataset, dcfg in datasets.items():
         logger.info("--- %s ---", dataset)
         audit, _ = audit_entity_ids(
             minio_client,
@@ -408,9 +500,9 @@ def main() -> None:
         )
         phase1_audits.append(audit)
 
-    logger.info("PHASE 2 — Transformation (Bronze → Silver)")
+    logger.info("PHASE 2a — Transformation: files (Bronze → Silver)")
 
-    for dataset, dcfg in cfg["datasets"].items():
+    for dataset, dcfg in datasets.items():
         logger.info("--- %s ---", dataset)
         results = transform_dataset(
             minio_client, spark,
@@ -419,9 +511,20 @@ def main() -> None:
         )
         transform_results.extend(results)
 
+    logger.info("PHASE 2b — Transformation: auxiliary (Bronze → Silver)")
+
+    for dataset, dcfg in datasets.items():
+        logger.info("--- %s ---", dataset)
+        results = copy_auxiliary(
+            minio_client, spark,
+            bronze_bucket, silver_bucket,
+            dataset, dcfg,
+        )
+        auxiliary_results.extend(results)
+
     logger.info("PHASE 3 — ID Audit (Silver, after transformation)")
 
-    for dataset, dcfg in cfg["datasets"].items():
+    for dataset, dcfg in datasets.items():
         logger.info("--- %s ---", dataset)
         silver_files_prefix = f"{dcfg['silver_base_prefix']}/files/"
         audit, _ = audit_entity_ids(
@@ -442,7 +545,7 @@ def main() -> None:
         )
         phase3_results.append(validation)
 
-    report = build_report(phase1_audits, transform_results, phase3_audits, phase3_results)
+    report = build_report(phase1_audits, transform_results, auxiliary_results, phase3_audits, phase3_results)
     print(json.dumps(report, indent=2))
     save_report(report, args.output)
 

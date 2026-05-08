@@ -46,7 +46,7 @@ datasets:
 
 # Silver — Step 02: Time Audit
 time_audit:
-  output_prefix: "02_time_audit/metadata"
+  output_prefix: "02_time_audit"
   output_filename: "time_audit.csv"
 
   datasets:
@@ -54,51 +54,43 @@ time_audit:
     kemocon:
       dataset_label: "K-EmoCon"
       silver_files_prefix: "01_entity_resolution/k-emocon/files"
-      subjects_bucket: "bronze"
-      subjects_path: "k-emocon/auxiliary/metadata/metadata/subjects.csv"
       timestamp_col: "timestamp"
       timestamp_unit_ms: true
+      subjects_bucket: "silver"
+      subjects_path: "01_entity_resolution/k-emocon/auxiliary/metadata/metadata/subjects.csv"
       signals:
         "E4_BVP.csv":
           signal_type: "E4_BVP"
           device: "Empatica E4"
           modality: "physio"
-          declared_hz: 64.0
         "E4_EDA.csv":
           signal_type: "E4_EDA"
           device: "Empatica E4"
           modality: "physio"
-          declared_hz: 4.0
         "E4_ACC.csv":
           signal_type: "E4_ACC"
           device: "Empatica E4"
           modality: "physio"
-          declared_hz: 32.0
         "E4_HR.csv":
           signal_type: "E4_HR"
           device: "Empatica E4"
           modality: "physio"
-          declared_hz: 1.0
         "E4_IBI.csv":
           signal_type: "E4_IBI"
           device: "Empatica E4"
           modality: "physio"
-          declared_hz: null
         "E4_TEMP.csv":
           signal_type: "E4_TEMP"
           device: "Empatica E4"
           modality: "physio"
-          declared_hz: 4.0
         "BrainWave.csv":
           signal_type: "BrainWave"
           device: "NeuroSky"
           modality: "eeg"
-          declared_hz: null
         "Polar_HR.csv":
           signal_type: "Polar_HR"
           device: "Polar H7"
           modality: "physio"
-          declared_hz: 1.0
       audio_signal:
         signal_type: "audio"
         device: "smartphone"
@@ -119,6 +111,7 @@ time_audit:
         label_suffix: "_label"
         timepoints_axis: 0
         instances_axis: 2
+        min_size_bytes: 10485760  # 10 MiB; intact files are ~431 MiB, truncated ones ~250 KiB
       audio_signal:
         signal_type: "audio"
         device: "microphone"
@@ -190,3 +183,207 @@ bronze_validation:
         metadata:
           file_type: "csv"
           extensions: [".csv"]
+
+# Silver — Step 03: Missingness Detection
+missingness_detection:
+  output_prefix: "03_missingness"
+  output_report_filename: "missingness_report.csv"
+
+  datasets:
+
+    kemocon:
+      dataset_label: "K-EmoCon"
+      silver_files_prefix: "01_entity_resolution/k-emocon/files"
+      timestamp_col: "timestamp"
+      timestamp_unit_ms: true
+      subjects_bucket: "silver"
+      subjects_path: "01_entity_resolution/k-emocon/auxiliary/metadata/metadata/subjects.csv"
+      # One row per expected signal per participant (unit_id == participant_id for K-EmoCon)
+      expected_signals:
+        - signal_type: "E4_BVP"
+          device: "Empatica E4"
+          modality: "physio"
+          filename: "E4_BVP.csv"
+          declared_hz: 64.0
+          zero_check: true    # BVP should not have sustained zeros
+          gap_detection: true
+        - signal_type: "E4_EDA"
+          device: "Empatica E4"
+          modality: "physio"
+          filename: "E4_EDA.csv"
+          declared_hz: 4.0
+          zero_check: true    # EDA should not have sustained zeros
+          gap_detection: true
+        - signal_type: "E4_ACC"
+          device: "Empatica E4"
+          modality: "physio"
+          filename: "E4_ACC.csv"
+          declared_hz: 32.0
+          zero_check: false
+          gap_detection: true
+        - signal_type: "E4_HR"
+          device: "Empatica E4"
+          modality: "physio"
+          filename: "E4_HR.csv"
+          declared_hz: 1.0
+          zero_check: false
+          gap_detection: true
+        - signal_type: "E4_IBI"
+          device: "Empatica E4"
+          modality: "physio"
+          filename: "E4_IBI.csv"
+          declared_hz: null
+          zero_check: false
+          gap_detection: false  # IBI is event-based (sparse); gap detection not meaningful
+        - signal_type: "E4_TEMP"
+          device: "Empatica E4"
+          modality: "physio"
+          filename: "E4_TEMP.csv"
+          declared_hz: 4.0
+          zero_check: false
+          gap_detection: true
+        - signal_type: "BrainWave"
+          device: "NeuroSky"
+          modality: "eeg"
+          filename: "BrainWave.csv"
+          declared_hz: null
+          zero_check: false
+          gap_detection: true
+        - signal_type: "Attention"
+          device: "NeuroSky"
+          modality: "eeg"
+          filename: "Attention.csv"
+          declared_hz: null
+          zero_check: false
+          gap_detection: true
+        - signal_type: "Meditation"
+          device: "NeuroSky"
+          modality: "eeg"
+          filename: "Meditation.csv"
+          declared_hz: null
+          zero_check: false
+          gap_detection: true
+        - signal_type: "Polar_HR"
+          device: "Polar H7"
+          modality: "physio"
+          filename: "Polar_HR.csv"
+          declared_hz: 1.0
+          zero_check: false
+          gap_detection: true
+        - signal_type: "audio"
+          device: "smartphone"
+          modality: "audio"
+          ext: ".wav"
+          zero_check: true
+          gap_detection: false
+        - signal_type: "video"
+          device: "smartphone"
+          modality: "video"
+          ext: ".mp4"
+          zero_check: false
+          gap_detection: false
+      data_availability_key: "01_entity_resolution/k-emocon/auxiliary/metadata/metadata/data_availability.csv"
+
+    eav:
+      dataset_label: "EAV"
+      silver_files_prefix: "01_entity_resolution/eav/files"
+      trial_id_pattern: "^(\\d+)_"
+      eeg_label_suffix: "_label"
+      eeg_timepoints_axis: 0
+      eeg_instances_axis: 2
+      expected_signals:
+        - signal_type: "eeg"
+          device: "BrainAmp"
+          modality: "eeg"
+          ext: ".mat"
+          zero_check: false
+          gap_detection: false
+          per_trial: false      # single .mat per participant contains all trials
+          expected_instances: 200
+          expected_timepoints: 10000  # 20s × 500 Hz
+          min_size_bytes: 10485760  # 10 MiB; intact files are ~431 MiB, truncated ones ~250 KiB
+        - signal_type: "audio"
+          device: "microphone"
+          modality: "audio"
+          ext: ".wav"
+          zero_check: true
+          gap_detection: false
+          per_trial: true       # one .wav per trial
+          trial_duration_s: 20.0
+          trial_id_start: 2     # even-numbered trials: 002, 004, …, 200
+          trial_id_step: 2
+          trial_id_count: 100
+          trial_id_format: "{:03d}"
+        - signal_type: "video"
+          device: "webcam"
+          modality: "video"
+          ext: ".mp4"
+          zero_check: false
+          gap_detection: false
+          per_trial: true       # one .mp4 per trial
+          trial_duration_s: 20.0
+          trial_id_start: 1
+          trial_id_step: 1
+          trial_id_count: 200
+          trial_id_format: "{:03d}"
+      known_missing: []
+
+# Silver — Step 04: Noise Detection & Quality Flags
+quality_flags:
+  output_prefix: "04_quality_flags"
+  window_size_s: 1                     # seconds per window
+
+  missing_fill_threshold: 0.5          # fill < this → MISSING
+  degraded_quality_threshold: 0.8      # quality < this (fill OK) → DEGRADED
+
+  signals:
+    E4_BVP:
+      flat_line_std_threshold: 0.001   # normalized BVP units
+      clipping_threshold: 1.0
+    E4_EDA:
+      flat_line_std_threshold: 0.0001  # µS
+      clipping_threshold: 100.0        # µS physiological max
+      valid_range_min: 0.0             # negative EDA is physically impossible
+    E4_ACC:
+      flat_line_std_threshold: 0.001   # g
+      clipping_threshold: 8.0          # g, E4 range ±8g
+    E4_HR:
+      flat_line_std_threshold: 0.0
+      clipping_threshold: 250.0        # bpm physiological max
+    E4_IBI:
+      flat_line_std_threshold: 0.001   # seconds between beats
+      clipping_threshold: 3.0          # 3s IBI ≈ 20 bpm physiological min
+    E4_TEMP:
+      flat_line_std_threshold: 0.001   # °C
+      clipping_threshold: 45.0         # °C, physiological max skin temp
+    BrainWave:
+      flat_line_std_threshold: 0.01
+      clipping_threshold: 4096.0       # NeuroSky raw EEG int range
+    Attention:
+      flat_line_std_threshold: 0.0
+      clipping_threshold: 100.0        # eSense metric 0–100
+    Meditation:
+      flat_line_std_threshold: 0.0
+      clipping_threshold: 100.0        # eSense metric 0–100
+    Polar_HR:
+      flat_line_std_threshold: 0.0
+      clipping_threshold: 250.0        # bpm
+    eeg:
+      flat_line_std_threshold: 0.01    # µV
+      clipping_threshold: 500.0        # µV, BrainAmp hardware range
+    audio:
+      flat_line_std_threshold: 0.0001
+      clipping_threshold: 0.99         # normalized amplitude [-1, 1]
+      silence_rms_threshold: 0.001
+    video:
+      blur_threshold: 50.0             # mean Laplacian variance across frames in window
+
+  datasets:
+    kemocon:
+      dataset_label: "K-EmoCon"
+      subjects_bucket: "silver"
+      subjects_path: "01_entity_resolution/k-emocon/auxiliary/metadata/metadata/subjects.csv"
+      silver_files_prefix: "01_entity_resolution/k-emocon/files"
+    eav:
+      dataset_label: "EAV"
+      silver_files_prefix: "01_entity_resolution/eav/files"
