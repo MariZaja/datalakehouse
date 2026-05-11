@@ -49,8 +49,6 @@ _DATASET_COLUMNS: Dict[str, List[str]] = {
     "K-EmoCon": KEMOCON_COLUMNS,
 }
 
-# meta_data.csv: 0-based column position → emotion class (after skiprows=2)
-# Columns 5-14: NEU_LIS, NEU_SPE, S_LIS, S_SPE, A_LIS, A_SPE, H_LIS, H_SPE, C_LIS, C_SPE
 _ONE_HOT_COL_TO_CLASS: Dict[int, str] = {
     5: "Neutral",    6: "Neutral",
     7: "Sadness",    8: "Sadness",
@@ -375,8 +373,6 @@ _KEMOCON_LIKERT_DIMS = ["arousal", "valence", "cheerful", "happy", "angry", "ner
 _KEMOCON_BROMP1_COLS = ["boredom", "confusion", "delight", "concentration", "frustration", "surprise", "none_1"]
 _KEMOCON_BROMP2_COLS = ["confrustion", "contempt", "dejection", "disgust", "eureka", "pride", "sorrow", "none_2"]
 
-# Maps perspective name → (subdirectory, file stem suffix)
-# e.g. "self" → files in self_annotations/ named P{N}.self.csv
 _KEMOCON_PERSPECTIVE_MAP: Dict[str, Tuple[str, str]] = {
     "self": ("self_annotations", ".self"),
     "partner": ("partner_annotations", ".partner"),
@@ -456,7 +452,7 @@ def _kemocon_quality_flag(flags: Dict[str, str]) -> str:
 def audit_kemocon_annotation_quality(
     minio_client,
     bucket: str,
-    entity_objects: Dict[str, List[Any]],  # unused; participants discovered from annotation files
+    entity_objects: Dict[str, List[Any]],
     ds_cfg: Dict[str, Any],
 ) -> List[Dict]:
     dataset_label = ds_cfg["dataset_label"]
