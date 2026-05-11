@@ -15,6 +15,7 @@ import yaml
 from dotenv import load_dotenv
 
 import config as project_config
+from minio_utils import download_object, _group_objects_by_entity, upload_csv
 
 load_dotenv()
 
@@ -131,20 +132,6 @@ def extract_mat_shape(data: bytes) -> Optional[Tuple[int, ...]]:
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
-
-
-# MinIO helper
-
-def download_object(minio_client, bucket: str, key: str) -> Optional[bytes]:
-    try:
-        response = minio_client.get_object(bucket, key)
-        data = response.read()
-        response.close()
-        response.release_conn()
-        return data
-    except Exception as e:
-        logger.error("Failed to download %s/%s: %s", bucket, key, e)
-        return None
 
 
 # Row builder
@@ -401,19 +388,6 @@ def audit_eav_entity(
     return rows
 
 
-# Grouping helper
-
-def _group_objects_by_entity(minio_client, bucket: str, prefix: str) -> Dict[str, List[Any]]:
-    entity_objects: Dict[str, List[Any]] = {}
-    full_prefix = prefix.rstrip("/") + "/"
-    for obj in minio_client.list_objects(bucket, prefix=full_prefix, recursive=True):
-        for seg in obj.object_name.split("/"):
-            if seg.startswith("entity="):
-                eid = seg[len("entity="):]
-                entity_objects.setdefault(eid, []).append(obj)
-                break
-    return entity_objects
-
 
 # Orchestration
 
@@ -468,17 +442,6 @@ def run_time_audit(
 
     return all_rows
 
-
-# ── Output ────────────────────────────────────────────────────────────────────
-
-def upload_csv(minio_client, bucket: str, key: str, df: pd.DataFrame) -> None:
-    csv_bytes = df.to_csv(index=False).encode("utf-8")
-    minio_client.put_object(
-        bucket, key,
-        data=io.BytesIO(csv_bytes),
-        length=len(csv_bytes),
-        content_type="text/csv",
-    )
 
 
 def parse_args() -> argparse.Namespace:
