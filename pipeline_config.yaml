@@ -387,3 +387,35 @@ quality_flags:
     eav:
       dataset_label: "EAV"
       silver_files_prefix: "01_entity_resolution/eav/files"
+
+# Silver — Step 05: Annotation Quality
+annotation_quality:
+  output_prefix: "05_annotation_quality"
+  output_filename: "annotation_quality_report.csv"
+
+  datasets:
+
+    eav:
+      dataset_label: "EAV"
+      silver_files_prefix: "01_entity_resolution/eav/files"
+      meta_data_path: "01_entity_resolution/eav/auxiliary/metadata/meta_data.csv"
+      questionnaire_path: "01_entity_resolution/eav/auxiliary/annotations/questionnaire.xlsx"
+      rater_disagreement_threshold: 3   # |participant - experimenter| >= this → DISAGREE
+      class_alignment_thresholds:
+        Anger:
+          arousal_min: 1
+          valence_max: -1
+        Happiness:
+          arousal_min: 1
+          valence_min: 1
+        Calm:
+          arousal_max: -1
+          valence_min: -1   # score=0 always MISALIGNED (enforced in code)
+        Sadness:
+          arousal_max: -1
+          valence_max: -1
+
+    kemocon:
+      dataset_label: "K-EmoCon"
+      annotations_prefix: "01_entity_resolution/k-emocon/auxiliary/annotations/emotion_annotations"
+      perspectives: [self, partner, aggregated_external]
