@@ -376,7 +376,28 @@ quality_flags:
       clipping_threshold: 0.99         # normalized amplitude [-1, 1]
       silence_rms_threshold: 0.001
     video:
-      blur_threshold: 50.0             # mean Laplacian variance across frames in window
+      datasets:
+        eav:
+          use_clipping: false
+          blur:
+            bad: 20
+            good: 40
+          clipping:
+            noisy: 0.01
+            bad: 0.03
+          noise:
+            bad: 15.0
+            noisy: 10.0
+        kemocon:
+          blur:
+            bad: 20
+            good: 35
+          clipping:
+            noisy: 0.02
+            bad: 0.05
+          noise:
+            bad: 8.0
+            noisy: 4.0
 
   datasets:
     kemocon:

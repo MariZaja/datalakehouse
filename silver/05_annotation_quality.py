@@ -13,6 +13,7 @@ import yaml
 from dotenv import load_dotenv
 
 import config as project_config
+from minio_utils import download_object, _group_objects_by_entity, upload_csv
 
 load_dotenv()
 
@@ -48,8 +49,6 @@ _DATASET_COLUMNS: Dict[str, List[str]] = {
     "K-EmoCon": KEMOCON_COLUMNS,
 }
 
-# meta_data.csv: 0-based column position → emotion class (after skiprows=2)
-# Columns 5-14: NEU_LIS, NEU_SPE, S_LIS, S_SPE, A_LIS, A_SPE, H_LIS, H_SPE, C_LIS, C_SPE
 _ONE_HOT_COL_TO_CLASS: Dict[int, str] = {
     5: "Neutral",    6: "Neutral",
     7: "Sadness",    8: "Sadness",
@@ -58,41 +57,6 @@ _ONE_HOT_COL_TO_CLASS: Dict[int, str] = {
     13: "Calm",      14: "Calm",
 }
 
-
-# ── MinIO helpers ──────────────────────────────────────────────────────────────
-
-def download_object(minio_client, bucket: str, key: str) -> Optional[bytes]:
-    try:
-        response = minio_client.get_object(bucket, key)
-        data = response.read()
-        response.close()
-        response.release_conn()
-        return data
-    except Exception as e:
-        logger.error("Failed to download %s/%s: %s", bucket, key, e)
-        return None
-
-
-def _group_objects_by_entity(minio_client, bucket: str, prefix: str) -> Dict[str, List[Any]]:
-    entity_objects: Dict[str, List[Any]] = {}
-    full_prefix = prefix.rstrip("/") + "/"
-    for obj in minio_client.list_objects(bucket, prefix=full_prefix, recursive=True):
-        for seg in obj.object_name.split("/"):
-            if seg.startswith("entity="):
-                eid = seg[len("entity="):]
-                entity_objects.setdefault(eid, []).append(obj)
-                break
-    return entity_objects
-
-
-def upload_csv(minio_client, bucket: str, key: str, df: pd.DataFrame) -> None:
-    csv_bytes = df.to_csv(index=False).encode("utf-8")
-    minio_client.put_object(
-        bucket, key,
-        data=io.BytesIO(csv_bytes),
-        length=len(csv_bytes),
-        content_type="text/csv",
-    )
 
 
 # ── meta_data.csv loader ───────────────────────────────────────────────────────
@@ -409,8 +373,6 @@ _KEMOCON_LIKERT_DIMS = ["arousal", "valence", "cheerful", "happy", "angry", "ner
 _KEMOCON_BROMP1_COLS = ["boredom", "confusion", "delight", "concentration", "frustration", "surprise", "none_1"]
 _KEMOCON_BROMP2_COLS = ["confrustion", "contempt", "dejection", "disgust", "eureka", "pride", "sorrow", "none_2"]
 
-# Maps perspective name → (subdirectory, file stem suffix)
-# e.g. "self" → files in self_annotations/ named P{N}.self.csv
 _KEMOCON_PERSPECTIVE_MAP: Dict[str, Tuple[str, str]] = {
     "self": ("self_annotations", ".self"),
     "partner": ("partner_annotations", ".partner"),
@@ -490,7 +452,7 @@ def _kemocon_quality_flag(flags: Dict[str, str]) -> str:
 def audit_kemocon_annotation_quality(
     minio_client,
     bucket: str,
-    entity_objects: Dict[str, List[Any]],  # unused; participants discovered from annotation files
+    entity_objects: Dict[str, List[Any]],
     ds_cfg: Dict[str, Any],
 ) -> List[Dict]:
     dataset_label = ds_cfg["dataset_label"]
@@ -615,7 +577,7 @@ def main() -> None:
     with open(args.config, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
-    minio_client, _ = project_config.config()
+    minio_client = project_config.config_minio()
     silver_bucket = cfg["bucket_silver"]
     aq_cfg = cfg.get("annotation_quality", {})
     output_prefix = aq_cfg.get("output_prefix", "05_annotation_quality").rstrip("/")
