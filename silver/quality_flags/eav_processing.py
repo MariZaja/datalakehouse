@@ -174,7 +174,9 @@ def process_eav_audio(
             logger.warning("[EAV] [%s] Trial %s audio → download failed", entity_id, trial_id)
             continue
         file_id = obj.object_name.split("/")[-1]
-        df = _process_single_wav(data, "eav", entity_id, file_id, window_size_s)
+        trial_duration_s = float(sig_cfg.get("trial_duration_s", 20.0))
+        df = _process_single_wav(data, "eav", entity_id, file_id, window_size_s,
+                                 max_duration_s=trial_duration_s)
         if df is not None and not df.empty:
             yield obj.object_name, df
         else:
@@ -208,9 +210,8 @@ def process_eav_video(
         if sd is None:
             logger.warning("[EAV] [%s] Trial %s video → could not decode", entity_id, trial_id)
             continue
-        video_section = qf_cfg.get("video", {})
-        ds_cfg = video_section.get("datasets", {}).get("eav", {})
-        video_cfg = {**ds_cfg, "noise": video_section.get("noise", {})}
+        video_section = qf_cfg.get("signals", {}).get("video", {})
+        video_cfg = video_section.get("datasets", {}).get("eav", {})
         rows = _compute_video_windows(sd, total_windows, window_size_s, video_cfg)
         if rows:
             yield obj.object_name, pd.DataFrame(rows)

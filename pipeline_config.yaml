@@ -378,12 +378,16 @@ quality_flags:
     video:
       datasets:
         eav:
+          use_clipping: false
           blur:
             bad: 20
             good: 40
           clipping:
             noisy: 0.01
             bad: 0.03
+          noise:
+            bad: 15.0
+            noisy: 10.0
         kemocon:
           blur:
             bad: 20
@@ -391,9 +395,9 @@ quality_flags:
           clipping:
             noisy: 0.02
             bad: 0.05
-      noise:
-        bad: 8.0
-        noisy: 4.0
+          noise:
+            bad: 8.0
+            noisy: 4.0
 
   datasets:
     kemocon:

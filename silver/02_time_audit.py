@@ -456,7 +456,7 @@ def main() -> None:
     with open(args.config, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
-    minio_client, _ = project_config.config()
+    minio_client = project_config.config_minio()
 
     silver_bucket = cfg["bucket_silver"]
     ta_cfg = cfg.get("time_audit", {})

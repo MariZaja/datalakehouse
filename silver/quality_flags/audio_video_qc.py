@@ -57,7 +57,7 @@ def _audio_problem_quality(m: Dict[str, Any]) -> Tuple[str, str]:
         problem = "FLAT"
     elif m["clip_ratio"] > 0.001 or m["clip_run_max"] >= 3:
         problem = "CLIPPING"
-    elif m["kurtosis"] > 10 or m["max_delta"] > 0.5:
+    elif m["kurtosis"] > 10 and m["max_delta"] > 0.5:
         problem = "ARTIFACT"
     else:
         problem = "NONE"
@@ -78,12 +78,20 @@ def _process_single_wav(
     participant_id: str,
     file_id: str,
     window_size_s: float,
+    start_s: float = 0.0,
+    max_duration_s: Optional[float] = None,
 ) -> Optional[pd.DataFrame]:
     sig = read_wav_signal(data)
     if sig is None:
         return None
     samples = sig["samples"]
     sr = sig["sample_rate_hz"]
+    start_sample = int(round(start_s * sr))
+    if max_duration_s is not None:
+        end_sample = start_sample + int(round(max_duration_s * sr))
+        samples = samples[start_sample:end_sample]
+    else:
+        samples = samples[start_sample:]
     window_n = int(round(sr * window_size_s))
     if window_n == 0:
         return None
@@ -122,17 +130,22 @@ def _video_quality_problem(
     clipping_bad: float,
     noise_noisy: float = 4.0,
     noise_bad: float = 8.0,
+    include_clipping: bool = True,
 ) -> Tuple[str, str]:
-    if window_clipping >= clipping_bad:
+    if include_clipping and window_clipping >= clipping_bad:
         problem_flag = "CLIPPING"
     elif window_blur < blur_bad or window_noise >= noise_bad:
         problem_flag = "ARTIFACT"
     else:
         problem_flag = "NONE"
 
-    if window_blur < blur_bad or window_clipping >= clipping_bad or window_noise >= noise_bad:
+    if (window_blur < blur_bad
+            or (include_clipping and window_clipping >= clipping_bad)
+            or window_noise >= noise_bad):
         quality_flag = "BAD"
-    elif window_blur < blur_good or window_clipping >= clipping_noisy or window_noise >= noise_noisy:
+    elif (window_blur < blur_good
+          or (include_clipping and window_clipping >= clipping_noisy)
+          or window_noise >= noise_noisy):
         quality_flag = "NOISY"
     else:
         quality_flag = "GOOD"
@@ -163,6 +176,7 @@ def _compute_video_windows(
     clipping_bad = float(clip_cfg.get("bad", 0.03))
     noise_noisy = float(noise_cfg.get("noisy", 4.0))
     noise_bad = float(noise_cfg.get("bad", 8.0))
+    include_clipping = bool(video_cfg.get("use_clipping", True))
 
     rows: List[Dict[str, Any]] = []
     for wid in range(total_windows):
@@ -189,7 +203,7 @@ def _compute_video_windows(
         quality_flag, problem_flag = _video_quality_problem(
             window_blur, window_clipping, window_noise,
             blur_bad, blur_good, clipping_noisy, clipping_bad,
-            noise_noisy, noise_bad,
+            noise_noisy, noise_bad, include_clipping,
         )
 
         rows.append({
@@ -218,7 +232,10 @@ def process_kemocon_audio(
     if file_data is None:
         return None
     window_size_s = float(qf_cfg.get("window_size_s", 1.0))
-    return _process_single_wav(file_data, "k-emocon", entity_id, file_id, window_size_s)
+    return _process_single_wav(
+        file_data, "k-emocon", entity_id, file_id, window_size_s,
+        max_duration_s=debate_duration_s,
+    )
 
 
 def process_kemocon_video(
@@ -235,8 +252,7 @@ def process_kemocon_video(
     if sd is None:
         logger.warning("[K-EmoCon] [%s] video: could not decode file", entity_id)
         return None
-    video_section = qf_cfg.get("video", {})
-    ds_cfg = video_section.get("datasets", {}).get("kemocon", {})
-    video_cfg = {**ds_cfg, "noise": video_section.get("noise", {})}
+    video_section = qf_cfg.get("signals", {}).get("video", {})
+    video_cfg = video_section.get("datasets", {}).get("kemocon", {})
     rows = _compute_video_windows(sd, total_windows, window_size_s, video_cfg)
     return pd.DataFrame(rows) if rows else None

@@ -577,7 +577,7 @@ def main() -> None:
     with open(args.config, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
-    minio_client, _ = project_config.config()
+    minio_client = project_config.config_minio()
     silver_bucket = cfg["bucket_silver"]
     aq_cfg = cfg.get("annotation_quality", {})
     output_prefix = aq_cfg.get("output_prefix", "05_annotation_quality").rstrip("/")

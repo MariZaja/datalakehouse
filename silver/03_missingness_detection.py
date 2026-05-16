@@ -796,7 +796,7 @@ def main() -> None:
     with open(args.config, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
-    minio_client, _ = project_config.config()
+    minio_client = project_config.config_minio()
     silver_bucket = cfg["bucket_silver"]
     md_cfg = cfg.get("missingness_detection", {})
     output_prefix = md_cfg.get("output_prefix", "03_missingness").rstrip("/")
