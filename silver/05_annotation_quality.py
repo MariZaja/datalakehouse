@@ -25,23 +25,22 @@ logging.basicConfig(
 logger = logging.getLogger("silver_annotation_quality")
 
 EAV_COLUMNS = [
-    "dataset", "participant_id", "trial_id",
-    "video_filename", "audio_filename", "eeg_mat_index",
+    "trial_id", "video_filename", "audio_filename", "eeg_mat_index",
     "emotion_class", "conversation_emotion_class", "conversation_idx", "conversation_occurrence",
     "valence_participant", "valence_experimenter", "arousal_participant", "arousal_experimenter",
-    "valence_rater_agreement", "arousal_rater_agreement",
     "valence_class_alignment", "arousal_class_alignment",
     "annotation_quality_flag",
+    "avg_valence", "avg_arousal", "valence_arousal_emotion", "emotion_class_alignment",
 ]
 
 KEMOCON_COLUMNS = [
-    "dataset", "participant_id",
     "seconds",
     "valence_rater_agreement", "arousal_rater_agreement",
     "cheerful_rater_agreement", "happy_rater_agreement", "angry_rater_agreement",
     "nervous_rater_agreement", "sad_rater_agreement",
     "bromp1_rater_agreement", "bromp2_rater_agreement",
     "annotation_quality_flag",
+    "dominant_emotion", "dominant_emotion_value", "avg_valence", "avg_arousal", "valence_arousal_emotion", "emotion_class_alignment",
 ]
 
 _DATASET_COLUMNS: Dict[str, List[str]] = {
@@ -269,6 +268,86 @@ def _compute_flag(
     return val_agree, aro_agree, val_align, aro_align, flag
 
 
+# ── Emotion labelling helpers ──────────────────────────────────────────────────
+
+def _valence_arousal_to_emotion(valence: float, arousal: float) -> Optional[str]:
+    """EAV mapping (scale centred at 0)."""
+    if pd.isna(valence) or pd.isna(arousal):
+        return None
+    if -1 < valence < 1 and -1 < arousal < 1:
+        return "Neutral"
+    if valence >= 0 and arousal >= 0:
+        return "Happiness"
+    if valence <= 0 and arousal >= 0:
+        return "Anger"
+    if valence >= 0 and arousal <= 0:
+        return "Calm"
+    if valence <= 0 and arousal <= 0:
+        return "Sadness"
+    return None
+
+
+def _valence_arousal_to_emotion_kemocon(valence: float, arousal: float) -> Optional[str]:
+    """K-EmoCon mapping (Likert scale 1-5, centred at 3)."""
+    if pd.isna(valence) or pd.isna(arousal):
+        return None
+    if 2.5 < valence < 3.5 and 2.5 < arousal < 3.5:
+        return "Neutral"
+    if valence >= 3 and arousal >= 3:
+        return "Happiness"
+    if valence <= 3 and arousal >= 3:
+        return "Anger"
+    if valence >= 3 and arousal <= 3:
+        return "Calm"
+    if valence <= 3 and arousal <= 3:
+        return "Sadness"
+    return None
+
+
+_KEMOCON_EMOTION_DIMS = ["cheerful", "happy", "angry", "nervous", "sad"]
+
+
+def _dominant_emotion_kemocon(window_rows: List[pd.Series]) -> Tuple[str, float]:
+    """Returns (mapped_labels, max_sum).
+
+    All matching rules are applied independently per dominant dim; the union of
+    matched classes (deduplicated, fixed order) is returned as a comma-separated string.
+
+    Rules:
+      sum <= 4                        → Neutral   (global, any dim)
+      dim in (happy, sad) & sum <= 6  → Calm
+      dim in (cheerful, happy)        → Happiness
+      dim == angry                    → Anger
+      dim in (nervous, sad)           → Sadness
+    """
+    sums: Dict[str, float] = {}
+    for dim in _KEMOCON_EMOTION_DIMS:
+        vals = [pd.to_numeric(row.get(dim, float("nan")), errors="coerce") for row in window_rows]
+        sums[dim] = sum(v for v in vals if pd.notna(v))
+
+    max_sum = max(sums.values())
+    dominant_dims = [dim for dim, s in sums.items() if s == max_sum]
+
+    _ORDER = ["Neutral", "Calm", "Happiness", "Anger", "Sadness"]
+    matched: set = set()
+
+    if max_sum <= 4:
+        matched.add("Neutral")
+
+    for dim in dominant_dims:
+        if dim in ("happy", "sad") and max_sum <= 6:
+            matched.add("Calm")
+        if dim in ("cheerful", "happy"):
+            matched.add("Happiness")
+        if dim == "angry":
+            matched.add("Anger")
+        if dim in ("nervous", "sad"):
+            matched.add("Sadness")
+
+    labels = [c for c in _ORDER if c in matched]
+    return ", ".join(labels), max_sum
+
+
 # ── EAV audit ─────────────────────────────────────────────────────────────────
 
 def audit_eav_annotation_quality(
@@ -331,11 +410,13 @@ def audit_eav_annotation_quality(
                 "valence_experimenter": None,
                 "arousal_participant": None,
                 "arousal_experimenter": None,
-                "valence_rater_agreement": None,
-                "arousal_rater_agreement": None,
                 "valence_class_alignment": None,
                 "arousal_class_alignment": None,
                 "annotation_quality_flag": None,
+                "avg_valence": None,
+                "avg_arousal": None,
+                "valence_arousal_emotion": None,
+                "emotion_class_alignment": None,
             }
 
             if quest_entry is None:
@@ -346,20 +427,25 @@ def audit_eav_annotation_quality(
                 aro_part = quest_entry["arousal_participant"]
                 val_exp  = quest_entry["valence_experimenter"]
                 aro_exp  = quest_entry["arousal_experimenter"]
-                val_agree, aro_agree, val_align, aro_align, flag = _compute_flag(
+                _, _, val_align, aro_align, flag = _compute_flag(
                     val_part, aro_part, val_exp, aro_exp,
                     conv_emotion, thresholds_cfg, disagreement_threshold,
                 )
+                avg_val = (val_part + val_exp) / 2
+                avg_aro = (aro_part + aro_exp) / 2
+                va_emotion = _valence_arousal_to_emotion(avg_val, avg_aro)
                 row.update({
-                    "valence_participant":    val_part,
-                    "valence_experimenter":   val_exp,
-                    "arousal_participant":    aro_part,
-                    "arousal_experimenter":   aro_exp,
-                    "valence_rater_agreement":  val_agree,
-                    "arousal_rater_agreement":  aro_agree,
-                    "valence_class_alignment":  val_align,
-                    "arousal_class_alignment":  aro_align,
-                    "annotation_quality_flag":  flag,
+                    "valence_participant":     val_part,
+                    "valence_experimenter":    val_exp,
+                    "arousal_participant":     aro_part,
+                    "arousal_experimenter":    aro_exp,
+                    "valence_class_alignment": val_align,
+                    "arousal_class_alignment": aro_align,
+                    "annotation_quality_flag": flag,
+                    "avg_valence":             avg_val,
+                    "avg_arousal":             avg_aro,
+                    "valence_arousal_emotion": va_emotion,
+                    "emotion_class_alignment": "ALIGNED" if trial["conversation_emotion_class"] == va_emotion else "MISALIGNED",
                 })
 
             rows.append(row)
@@ -491,8 +577,6 @@ def audit_kemocon_annotation_quality(
         for win_idx in range(min_len):
             window_rows = [dfs[p].iloc[win_idx] for p in perspectives]
 
-            seconds_val = pd.to_numeric(window_rows[0].get("seconds", win_idx * 5), errors="coerce")
-
             flags: Dict[str, str] = {}
             for dim in _KEMOCON_LIKERT_DIMS:
                 vals = [pd.to_numeric(row.get(dim, float("nan")), errors="coerce") for row in window_rows]
@@ -500,10 +584,18 @@ def audit_kemocon_annotation_quality(
             flags["bromp1"] = _kemocon_bromp_agree(window_rows, _KEMOCON_BROMP1_COLS)
             flags["bromp2"] = _kemocon_bromp_agree(window_rows, _KEMOCON_BROMP2_COLS)
 
+            val_vals = [pd.to_numeric(row.get("valence", float("nan")), errors="coerce") for row in window_rows]
+            aro_vals = [pd.to_numeric(row.get("arousal", float("nan")), errors="coerce") for row in window_rows]
+            avg_val = float(pd.Series(val_vals).mean())
+            avg_aro = float(pd.Series(aro_vals).mean())
+            va_emotion = _valence_arousal_to_emotion_kemocon(avg_val, avg_aro)
+            dom_labels, dom_value = _dominant_emotion_kemocon(window_rows)
+            aligned = "ALIGNED" if va_emotion and va_emotion in dom_labels.split(", ") else "MISALIGNED"
+
             rows.append({
                 "dataset": dataset_label,
                 "participant_id": participant_id,
-                "seconds": seconds_val,
+                "seconds": win_idx * 5,
                 "valence_rater_agreement": flags["valence"],
                 "arousal_rater_agreement": flags["arousal"],
                 "cheerful_rater_agreement": flags["cheerful"],
@@ -514,6 +606,12 @@ def audit_kemocon_annotation_quality(
                 "bromp1_rater_agreement": flags["bromp1"],
                 "bromp2_rater_agreement": flags["bromp2"],
                 "annotation_quality_flag": _kemocon_quality_flag(flags),
+                "dominant_emotion": dom_labels,
+                "dominant_emotion_value": dom_value,
+                "avg_valence": avg_val,
+                "avg_arousal": avg_aro,
+                "valence_arousal_emotion": va_emotion,
+                "emotion_class_alignment": aligned,
             })
 
         logger.info("[K-EmoCon] [%s] %d window rows generated", participant_id, min_len)
@@ -581,7 +679,6 @@ def main() -> None:
     silver_bucket = cfg["bucket_silver"]
     aq_cfg = cfg.get("annotation_quality", {})
     output_prefix = aq_cfg.get("output_prefix", "05_annotation_quality").rstrip("/")
-    output_filename = aq_cfg.get("output_filename", "annotation_quality_report.csv")
 
     logger.info("Starting Silver — Step 05: Annotation Quality")
 
@@ -601,7 +698,7 @@ def main() -> None:
     for (dataset, participant_id), part_df in df.groupby(["dataset", "participant_id"], sort=True):
         columns = _DATASET_COLUMNS.get(dataset, list(part_df.columns))
         ds_dir = _DATASET_DIR.get(dataset, dataset.lower().replace("-", "").replace(" ", "_"))
-        report_key = f"{output_prefix}/{ds_dir}/entity={participant_id}/{output_filename}"
+        report_key = f"{output_prefix}/{ds_dir}/{participant_id}_annotation_quality.csv"
         upload_csv(minio_client, silver_bucket, report_key, part_df[columns])
         logger.info("[%s] [%s] %d rows → %s", dataset, participant_id, len(part_df), report_key)
         uploaded += 1

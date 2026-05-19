@@ -46,12 +46,6 @@ _FILESTEM_TO_SIGNAL = {
 
 
 def _signal_type_from_path(obj_name: str) -> str:
-    """Derive signal_type from a quality_flags file path.
-
-    Tries to match known file stems embedded in the filename; falls back to
-    the modality= segment when the stem is not recognisable (e.g. K-EmoCon
-    debate audio whose filename carries the source recording name).
-    """
     parts = obj_name.split("/")
 
     modality = None
