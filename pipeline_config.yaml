@@ -1,5 +1,6 @@
 bucket: bronze
 bucket_silver: silver
+bucket_gold: gold
 
 datasets:
 
@@ -440,3 +441,33 @@ annotation_quality:
       dataset_label: "K-EmoCon"
       annotations_prefix: "01_entity_resolution/k-emocon/auxiliary/annotations/emotion_annotations"
       perspectives: [self, partner, aggregated_external]
+
+data_quality:
+  output_prefix: "data_quality"
+  output_filename: "_data_quality.csv"
+  datasets:
+    eav:
+      dataset_label: "EAV"
+      silver_files_prefix: "04_quality_flags/eav/files"
+      dataset_folder_name: "eav"
+      flag_columns:
+        audio: "audio_flag"
+        eeg: "eeg_flag"
+        video: "video_flag"
+    k-emocon:
+      dataset_label: "K-EmoCon"
+      silver_files_prefix: "04_quality_flags/k-emocon/files"
+      dataset_folder_name: "k-emocon"
+      flag_columns:
+        audio: "audio_flag"
+        acc: "e4_acc_flag"
+        eda: "e4_eda_flag"
+        bvp: "e4_bvp_flag"
+        hr: "e4_hr_flag"
+        ibi: "e4_ibi_flag"
+        temp: "e4_temp_flag"
+        attention: "attention_flag"
+        meditation: "meditation_flag"
+        brainwave: "brain_wave_flag"
+        polar_hr: "polar_hr_flag"
+        video: "video_flag"
