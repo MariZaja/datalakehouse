@@ -41,6 +41,18 @@ def upload_csv(minio_client, bucket: str, key: str, df: pd.DataFrame) -> None:
     )
 
 
+def upload_parquet(minio_client, bucket: str, key: str, df: pd.DataFrame) -> None:
+    buf = io.BytesIO()
+    df.to_parquet(buf, index=False, engine="pyarrow")
+    parquet_bytes = buf.getvalue()
+    minio_client.put_object(
+        bucket, key,
+        data=io.BytesIO(parquet_bytes),
+        length=len(parquet_bytes),
+        content_type="application/octet-stream",
+    )
+
+
 def load_missingness_report(
     minio_client, bucket: str, key: str
 ) -> Tuple[Dict[Tuple[str, str, str], float], Set[Tuple[str, str, str]]]:
