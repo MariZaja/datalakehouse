@@ -453,40 +453,47 @@ def process_e4_eda(
 # ── HR ─────────────────────────────────────────────────────────────────────────
 
 def _hr_quality_problem(
-    n_window: int,
-    x: float,
-    roc: float,
-    flat_line_30: float,
+    completeness: float,
+    hr_mean: float,
+    hr_std: float,
+    roc_max: float,
 ) -> Tuple[str, str]:
     _q = {"GOOD": 0, "NOISY": 1, "BAD": 2}
     results: List[Tuple[str, str]] = []
 
-    if n_window != 1:
-        return "BAD", "ARTIFACT"
-    results.append(("GOOD", "NONE"))
-
-    if 40 <= x <= 180:
+    if completeness >= 0.9:
         results.append(("GOOD", "NONE"))
-    elif (30 <= x < 40) or (180 < x <= 220):
-        results.append(("NOISY", "NONE"))
+    elif completeness >= 0.7:
+        results.append(("NOISY", "ARTIFACT"))
     else:
         results.append(("BAD", "ARTIFACT"))
 
-    if not np.isnan(roc):
-        if roc <= 10:
+    if not np.isnan(hr_mean):
+        if 40 <= hr_mean <= 180:
             results.append(("GOOD", "NONE"))
-        elif roc <= 20:
+        elif (30 <= hr_mean < 40) or (180 < hr_mean <= 220):
             results.append(("NOISY", "NONE"))
         else:
             results.append(("BAD", "ARTIFACT"))
 
-    if not np.isnan(flat_line_30):
-        if flat_line_30 >= 0.5:
+    if not np.isnan(hr_std):
+        if hr_std >= 0.5:
             results.append(("GOOD", "NONE"))
-        elif flat_line_30 >= 0.1:
+        elif hr_std >= 0.1:
             results.append(("NOISY", "NONE"))
         else:
             results.append(("BAD", "FLAT"))
+
+    if not np.isnan(roc_max):
+        if roc_max <= 8:
+            results.append(("GOOD", "NONE"))
+        elif roc_max <= 15:
+            results.append(("NOISY", "NONE"))
+        else:
+            results.append(("BAD", "ARTIFACT"))
+
+    if not results:
+        return "BAD", "ARTIFACT"
 
     quality_flag = max((r[0] for r in results), key=lambda q: _q[q])
     problem_set = {r[1] for r in results}
@@ -506,6 +513,8 @@ def process_e4_hr(
     bvp_df: Optional[pd.DataFrame] = None,
 ) -> Optional[pd.DataFrame]:
     window_size_s = float(qf_cfg.get("window_size_s", 1))
+    analytics_window_s = 10.0
+    use_pre_start = bool(qf_cfg.get("use_pre_start_as_warmup", True))
     total_windows = math.ceil(debate_duration_s / window_size_s)
 
     bvp_flags: Dict[int, str] = (
@@ -519,12 +528,15 @@ def process_e4_hr(
             "window_id": wid,
             "window_start_s": round(wid * window_size_s, 3),
             "window_end_s": round((wid + 1) * window_size_s, 3),
-            "samples": 0,
-            "in_range": False,
-            "RoC": float("nan"),
-            "flat_line_30": float("nan"),
+            "completeness": 0.0,
+            "hr_mean": float("nan"),
+            "hr_std": float("nan"),
+            "hr_ratio_up": float("nan"),
+            "hr_ratio_down": float("nan"),
+            "RoC_max": float("nan"),
             "quality_flag": "BAD",
             "problem_flag": "ARTIFACT",
+            "annotation": "",
             "bvp_quality_flag": bvp_flags.get(wid),
         }
 
@@ -540,51 +552,59 @@ def process_e4_hr(
     valid_mask = sig["valid_mask"] & np.isfinite(values)
 
     rows: List[Dict[str, Any]] = []
-    prev_quality_flag: Optional[str] = None
-    prev_x: Optional[float] = None
 
     for wid in range(total_windows):
         w_start = wid * window_size_s
         w_end = w_start + window_size_s
+        analytics_start = w_end - analytics_window_s
+        is_warmup = analytics_start < 0.0
 
-        in_window = valid_mask & (rel_ts >= w_start) & (rel_ts < w_end)
-        n_window = int(in_window.sum())
+        eff_start = analytics_start if use_pre_start else max(0.0, analytics_start)
+        in_analytics = valid_mask & (rel_ts >= eff_start) & (rel_ts < w_end)
+        x_win = values[in_analytics]
+        n_actual = len(x_win)
+        completeness = round(min(1.0, n_actual / analytics_window_s), 4)
 
-        if n_window == 0:
+        if n_actual == 0:
             rows.append(_missing_row(wid))
-            prev_quality_flag = "BAD"
-            prev_x = None
             continue
 
-        x = float(values[in_window][0])
-        in_range = bool(30 <= x <= 220)
+        hr_mean = round(float(np.mean(x_win)), 4)
+        hr_std = round(float(np.std(x_win)), 6) if n_actual >= 2 else float("nan")
 
-        if prev_x is not None and prev_quality_flag != "BAD":
-            roc = round(abs(x - prev_x), 4)
+        if n_actual >= 2:
+            diffs = np.diff(x_win)
+            hr_ratio_up = round(float(np.percentile(diffs, 95)), 4)
+            hr_ratio_down = round(float(np.percentile(diffs, 5)), 4)
+            roc_max = round(float(max(abs(hr_ratio_up), abs(hr_ratio_down))), 4)
         else:
-            roc = float("nan")
+            hr_ratio_up = float("nan")
+            hr_ratio_down = float("nan")
+            roc_max = float("nan")
 
-        in_roll = valid_mask & (rel_ts >= w_end - 30.0) & (rel_ts < w_end)
-        x_roll = values[in_roll]
-        flat_line_30 = round(float(np.std(x_roll)), 6) if len(x_roll) >= 2 else float("nan")
-
-        quality_flag, problem_flag = _hr_quality_problem(n_window, x, roc, flat_line_30)
+        if is_warmup and not use_pre_start:
+            quality_flag = "NOISY"
+            problem_flag = "NONE"
+            annotation = "insufficient_warmup"
+        else:
+            quality_flag, problem_flag = _hr_quality_problem(completeness, hr_mean, hr_std, roc_max)
+            annotation = ""
 
         rows.append({
             "window_id": wid,
             "window_start_s": round(w_start, 3),
             "window_end_s": round(w_end, 3),
-            "samples": n_window,
-            "in_range": in_range,
-            "RoC": roc,
-            "flat_line_30": flat_line_30,
+            "completeness": completeness,
+            "hr_mean": hr_mean,
+            "hr_std": hr_std,
+            "hr_ratio_up": hr_ratio_up,
+            "hr_ratio_down": hr_ratio_down,
+            "RoC_max": roc_max,
             "quality_flag": quality_flag,
             "problem_flag": problem_flag,
+            "annotation": annotation,
             "bvp_quality_flag": bvp_flags.get(wid),
         })
-
-        prev_quality_flag = quality_flag
-        prev_x = x
 
     return pd.DataFrame(rows) if rows else None
 
