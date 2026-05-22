@@ -332,7 +332,7 @@ missingness_detection:
 # Silver — Step 04: Noise Detection & Quality Flags
 quality_flags:
   output_prefix: "04_quality_flags"
-  window_size_s: 1                     # seconds per window
+  window_size_s: 0.3                    # seconds per window
 
   missing_fill_threshold: 0.5          # fill < this → MISSING
   degraded_quality_threshold: 0.8      # quality < this (fill OK) → DEGRADED

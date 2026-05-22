@@ -7,7 +7,7 @@ import pandas as pd
 
 from .minio_utils import download_object, upload_csv
 from .signal_readers import _output_filename
-from .e4_signals import (
+from .biosignals import (
     process_e4_bvp, process_e4_eda, process_e4_acc, process_e4_hr,
     process_e4_ibi, process_e4_temp, process_brainwave, process_attention,
     process_meditation, process_polar_hr,
