@@ -1049,6 +1049,9 @@ def process_attention(
     qf_cfg: Dict[str, Any],
 ) -> Optional[pd.DataFrame]:
     window_size_s = float(qf_cfg.get("window_size_s", 1))
+    sr = sample_rate_hz or 1.0
+    analysis_window_s = max(window_size_s, 1.0 / sr)
+    total_epochs = math.ceil(debate_duration_s / analysis_window_s)
     total_windows = math.ceil(debate_duration_s / window_size_s)
 
     def _missing_row(wid: int) -> Dict[str, Any]:
@@ -1079,37 +1082,25 @@ def process_attention(
 
     _q = {"GOOD": 0, "NOISY": 1, "BAD": 2}
 
-    rows: List[Dict[str, Any]] = []
+    # Phase 1: compute quality per analysis epoch (maintains run counters in order)
+    epoch_data: List[Dict[str, Any]] = []
     prev_x: Optional[float] = None
     cur_run_100: int = 0
     cur_run_val: Optional[float] = None
     cur_run_len: int = 0
 
-    for wid in range(total_windows):
-        w_start = wid * window_size_s
-        w_end = w_start + window_size_s
+    for eid in range(total_epochs):
+        epoch_start = eid * analysis_window_s
+        in_epoch = valid_mask & (rel_ts >= epoch_start) & (rel_ts < epoch_start + analysis_window_s)
+        n_epoch = int(in_epoch.sum())
+        xs = values[in_epoch]
 
-        in_window = valid_mask & (rel_ts >= w_start) & (rel_ts < w_end)
-        n_actual = int(in_window.sum())
-        xs = values[in_window]
-
-        if n_actual == 0:
-            rows.append({
-                "window_id": wid,
-                "window_start_s": round(w_start, 3),
-                "window_end_s": round(w_end, 3),
-                "samples": 0,
-                "zeros": False,
-                "low_value": False,
-                "delta": float("nan"),
-                "run_100": 0,
-                "run": 0,
-                "quality_flag": "BAD",
-                "problem_flag": "ARTIFACT",
+        if n_epoch == 0:
+            epoch_data.append({
+                "zeros": False, "low_value": False, "delta": float("nan"),
+                "run_100": cur_run_100, "run": 0,
+                "quality_flag": "BAD", "problem_flag": "ARTIFACT",
             })
-            cur_run_100 = 0
-            cur_run_val = None
-            cur_run_len = 0
             continue
 
         zeros = bool(np.any(xs == 0.0))
@@ -1121,15 +1112,15 @@ def process_attention(
         for x in xs:
             cur_run_100 = cur_run_100 + 1 if x == 100.0 else 0
 
-        run_in_window: List[int] = []
+        run_in_epoch: List[int] = []
         for x in xs:
             if x == cur_run_val:
                 cur_run_len += 1
             else:
                 cur_run_val = x
                 cur_run_len = 1
-            run_in_window.append(cur_run_len)
-        run_max = max(run_in_window)
+            run_in_epoch.append(cur_run_len)
+        run_max = max(run_in_epoch)
 
         prev_x = float(xs[-1])
 
@@ -1155,18 +1146,34 @@ def process_attention(
         problem_set = {r[1] for r in results}
         problem_flag = next(p for p in ("FLAT", "CLIPPING", "ARTIFACT", "NONE") if p in problem_set)
 
+        epoch_data.append({
+            "zeros": zeros, "low_value": low_value, "delta": delta,
+            "run_100": cur_run_100, "run": run_max,
+            "quality_flag": quality_flag, "problem_flag": problem_flag,
+        })
+
+    # Phase 2: expand to 300ms windows; assign each window to epoch via its center
+    rows: List[Dict[str, Any]] = []
+    for wid in range(total_windows):
+        w_start = wid * window_size_s
+        w_end = w_start + window_size_s
+        w_center = w_start + window_size_s / 2
+        eid = min(int(w_center / analysis_window_s), total_epochs - 1)
+        ep = epoch_data[eid]
+
+        n_sub = int((valid_mask & (rel_ts >= w_start) & (rel_ts < w_end)).sum())
         rows.append({
             "window_id": wid,
             "window_start_s": round(w_start, 3),
             "window_end_s": round(w_end, 3),
-            "samples": n_actual,
-            "zeros": zeros,
-            "low_value": low_value,
-            "delta": delta,
-            "run_100": cur_run_100,
-            "run": run_max,
-            "quality_flag": quality_flag,
-            "problem_flag": problem_flag,
+            "samples": n_sub,
+            "zeros": ep["zeros"],
+            "low_value": ep["low_value"],
+            "delta": ep["delta"],
+            "run_100": ep["run_100"],
+            "run": ep["run"],
+            "quality_flag": ep["quality_flag"],
+            "problem_flag": ep["problem_flag"],
         })
 
     return pd.DataFrame(rows) if rows else None
@@ -1185,6 +1192,9 @@ def process_meditation(
     qf_cfg: Dict[str, Any],
 ) -> Optional[pd.DataFrame]:
     window_size_s = float(qf_cfg.get("window_size_s", 1))
+    sr = sample_rate_hz or 1.0
+    analysis_window_s = max(window_size_s, 1.0 / sr)
+    total_epochs = math.ceil(debate_duration_s / analysis_window_s)
     total_windows = math.ceil(debate_duration_s / window_size_s)
 
     def _missing_row(wid: int) -> Dict[str, Any]:
@@ -1215,37 +1225,25 @@ def process_meditation(
 
     _q = {"GOOD": 0, "NOISY": 1, "BAD": 2}
 
-    rows: List[Dict[str, Any]] = []
+    # Phase 1: compute quality per analysis epoch (maintains run counters in order)
+    epoch_data: List[Dict[str, Any]] = []
     prev_x: Optional[float] = None
     cur_run_100: int = 0
     cur_run_val: Optional[float] = None
     cur_run_len: int = 0
 
-    for wid in range(total_windows):
-        w_start = wid * window_size_s
-        w_end = w_start + window_size_s
+    for eid in range(total_epochs):
+        epoch_start = eid * analysis_window_s
+        in_epoch = valid_mask & (rel_ts >= epoch_start) & (rel_ts < epoch_start + analysis_window_s)
+        n_epoch = int(in_epoch.sum())
+        xs = values[in_epoch]
 
-        in_window = valid_mask & (rel_ts >= w_start) & (rel_ts < w_end)
-        n_actual = int(in_window.sum())
-        xs = values[in_window]
-
-        if n_actual == 0:
-            rows.append({
-                "window_id": wid,
-                "window_start_s": round(w_start, 3),
-                "window_end_s": round(w_end, 3),
-                "samples": 0,
-                "zeros": False,
-                "low_value": False,
-                "delta": float("nan"),
-                "run_100": 0,
-                "run": 0,
-                "quality_flag": "BAD",
-                "problem_flag": "ARTIFACT",
+        if n_epoch == 0:
+            epoch_data.append({
+                "zeros": False, "low_value": False, "delta": float("nan"),
+                "run_100": cur_run_100, "run": 0,
+                "quality_flag": "BAD", "problem_flag": "ARTIFACT",
             })
-            cur_run_100 = 0
-            cur_run_val = None
-            cur_run_len = 0
             continue
 
         zeros = bool(np.any(xs == 0.0))
@@ -1257,15 +1255,15 @@ def process_meditation(
         for x in xs:
             cur_run_100 = cur_run_100 + 1 if x == 100.0 else 0
 
-        run_in_window: List[int] = []
+        run_in_epoch: List[int] = []
         for x in xs:
             if x == cur_run_val:
                 cur_run_len += 1
             else:
                 cur_run_val = x
                 cur_run_len = 1
-            run_in_window.append(cur_run_len)
-        run_max = max(run_in_window)
+            run_in_epoch.append(cur_run_len)
+        run_max = max(run_in_epoch)
 
         prev_x = float(xs[-1])
 
@@ -1291,18 +1289,34 @@ def process_meditation(
         problem_set = {r[1] for r in results}
         problem_flag = next(p for p in ("FLAT", "CLIPPING", "ARTIFACT", "NONE") if p in problem_set)
 
+        epoch_data.append({
+            "zeros": zeros, "low_value": low_value, "delta": delta,
+            "run_100": cur_run_100, "run": run_max,
+            "quality_flag": quality_flag, "problem_flag": problem_flag,
+        })
+
+    # Phase 2: expand to 300ms windows; assign each window to epoch via its center
+    rows: List[Dict[str, Any]] = []
+    for wid in range(total_windows):
+        w_start = wid * window_size_s
+        w_end = w_start + window_size_s
+        w_center = w_start + window_size_s / 2
+        eid = min(int(w_center / analysis_window_s), total_epochs - 1)
+        ep = epoch_data[eid]
+
+        n_sub = int((valid_mask & (rel_ts >= w_start) & (rel_ts < w_end)).sum())
         rows.append({
             "window_id": wid,
             "window_start_s": round(w_start, 3),
             "window_end_s": round(w_end, 3),
-            "samples": n_actual,
-            "zeros": zeros,
-            "low_value": low_value,
-            "delta": delta,
-            "run_100": cur_run_100,
-            "run": run_max,
-            "quality_flag": quality_flag,
-            "problem_flag": problem_flag,
+            "samples": n_sub,
+            "zeros": ep["zeros"],
+            "low_value": ep["low_value"],
+            "delta": ep["delta"],
+            "run_100": ep["run_100"],
+            "run": ep["run"],
+            "quality_flag": ep["quality_flag"],
+            "problem_flag": ep["problem_flag"],
         })
 
     return pd.DataFrame(rows) if rows else None
@@ -1362,6 +1376,9 @@ def process_polar_hr(
     e4_hr_df: Optional[pd.DataFrame] = None,
 ) -> Optional[pd.DataFrame]:
     window_size_s = float(qf_cfg.get("window_size_s", 1))
+    sr = sample_rate_hz or 1.0
+    analysis_window_s = max(window_size_s, 1.0 / sr)
+    total_epochs = math.ceil(debate_duration_s / analysis_window_s)
     total_windows = math.ceil(debate_duration_s / window_size_s)
 
     e4_flags: Dict[int, str] = (
@@ -1395,51 +1412,72 @@ def process_polar_hr(
     values = sig["values"].flatten()
     valid_mask = sig["valid_mask"] & np.isfinite(values)
 
-    rows: List[Dict[str, Any]] = []
+    # Phase 1: compute quality per analysis epoch
+    epoch_data: List[Dict[str, Any]] = []
     prev_quality_flag: Optional[str] = None
     prev_x: Optional[float] = None
 
-    for wid in range(total_windows):
-        w_start = wid * window_size_s
-        w_end = w_start + window_size_s
+    for eid in range(total_epochs):
+        epoch_start = eid * analysis_window_s
+        epoch_end = epoch_start + analysis_window_s
 
-        in_window = valid_mask & (rel_ts >= w_start) & (rel_ts < w_end)
-        n_window = int(in_window.sum())
+        in_epoch = valid_mask & (rel_ts >= epoch_start) & (rel_ts < epoch_end)
+        n_epoch = int(in_epoch.sum())
 
-        if n_window == 0:
-            rows.append(_missing_row(wid))
+        if n_epoch == 0:
+            epoch_data.append({
+                "in_range": False, "RoC": float("nan"), "flat_line_30": float("nan"),
+                "quality_flag": "BAD", "problem_flag": "ARTIFACT",
+            })
             prev_quality_flag = "BAD"
             prev_x = None
             continue
 
-        x = float(values[in_window][0])
+        x = float(values[in_epoch][0])
         in_range = bool(30 <= x <= 220)
 
-        if prev_x is not None and prev_quality_flag != "BAD":
-            roc = round(abs(x - prev_x), 4)
-        else:
-            roc = float("nan")
+        roc = (
+            round(abs(x - prev_x), 4)
+            if prev_x is not None and prev_quality_flag != "BAD"
+            else float("nan")
+        )
 
-        in_roll = valid_mask & (rel_ts >= w_end - 30.0) & (rel_ts < w_end)
+        in_roll = valid_mask & (rel_ts >= epoch_end - 30.0) & (rel_ts < epoch_end)
         x_roll = values[in_roll]
         flat_line_30 = round(float(np.std(x_roll)), 6) if len(x_roll) >= 2 else float("nan")
 
-        quality_flag, problem_flag = _polar_hr_quality_problem(n_window, x, roc, flat_line_30)
+        quality_flag, problem_flag = _polar_hr_quality_problem(n_epoch, x, roc, flat_line_30)
+
+        epoch_data.append({
+            "in_range": in_range, "RoC": roc, "flat_line_30": flat_line_30,
+            "quality_flag": quality_flag, "problem_flag": problem_flag,
+        })
+        prev_quality_flag = quality_flag
+        prev_x = x
+
+    # Phase 2: expand to 300ms windows; assign each window to epoch via its center
+    rows: List[Dict[str, Any]] = []
+    for wid in range(total_windows):
+        w_start = wid * window_size_s
+        w_end = w_start + window_size_s
+        w_center = w_start + window_size_s / 2
+        eid = min(int(w_center / analysis_window_s), total_epochs - 1)
+        ep = epoch_data[eid]
+
+        in_sub = valid_mask & (rel_ts >= w_start) & (rel_ts < w_end)
+        n_sub = int(in_sub.sum())
 
         rows.append({
             "window_id": wid,
             "window_start_s": round(w_start, 3),
             "window_end_s": round(w_end, 3),
-            "samples": n_window,
-            "in_range": in_range,
-            "RoC": roc,
-            "flat_line_30": flat_line_30,
-            "quality_flag": quality_flag,
-            "problem_flag": problem_flag,
+            "samples": n_sub,
+            "in_range": ep["in_range"],
+            "RoC": ep["RoC"],
+            "flat_line_30": ep["flat_line_30"],
+            "quality_flag": ep["quality_flag"],
+            "problem_flag": ep["problem_flag"],
             "e4_HR_quality_flag": e4_flags.get(wid),
         })
-
-        prev_quality_flag = quality_flag
-        prev_x = x
 
     return pd.DataFrame(rows) if rows else None
