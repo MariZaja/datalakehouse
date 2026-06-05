@@ -98,7 +98,9 @@ def read_video_signal(data: bytes) -> Optional[Dict[str, Any]]:
 
         lap_vars: List[float] = []
         clipped_ratios: List[float] = []
-        noise_sigmas: List[float] = []
+        face_detections: List[int] = []
+
+        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
         while True:
             ret, frame = cap.read()
@@ -110,8 +112,8 @@ def read_video_signal(data: bytes) -> Optional[Dict[str, Any]]:
             lap_vars.append(float(cv2.Laplacian(gray, cv2.CV_64F).var()))
             clipped_ratios.append(float(np.sum((gray < 5) | (gray > 250)) / total_px))
 
-            blurred = cv2.medianBlur(gray, 3)
-            noise_sigmas.append(float(np.std(gray.astype(np.float32) - blurred.astype(np.float32))))
+            faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4)
+            face_detections.append(1 if len(faces) > 0 else 0)
 
         cap.release()
         if not lap_vars:
@@ -120,7 +122,7 @@ def read_video_signal(data: bytes) -> Optional[Dict[str, Any]]:
         return {
             "lap_vars": np.array(lap_vars),
             "clipped_ratios": np.array(clipped_ratios),
-            "noise_sigmas": np.array(noise_sigmas),
+            "face_detections": np.array(face_detections, dtype=np.float32),
             "sample_rate_hz": fps,
             "n_samples": len(lap_vars),
         }

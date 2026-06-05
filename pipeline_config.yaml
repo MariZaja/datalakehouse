@@ -442,6 +442,15 @@ annotation_quality:
       annotations_prefix: "01_entity_resolution/k-emocon/auxiliary/annotations/emotion_annotations"
       perspectives: [self, partner, aggregated_external]
 
+# Gold — Step 02: Feature Extraction
+feature_extraction:
+  output_prefix: "feature_extraction"
+  window_size_s: 0.3              # window length for audio/video/EEG/BVP/ACC (300 ms)
+  hr_ibi_window_size_s: 10.0     # sliding window length for HR and IBI (10 s)
+  hr_ibi_step_s: 0.3             # sliding step for HR and IBI windows (300 ms)
+  eda_temp_window_size_s: 30.0   # sliding window length for EDA and TEMP (30 s)
+  eda_temp_step_s: 0.3           # sliding step for EDA and TEMP windows (300 ms)
+
 data_quality:
   output_prefix: "data_quality"
   output_filename: "_data_quality.csv"

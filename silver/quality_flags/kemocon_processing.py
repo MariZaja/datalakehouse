@@ -8,9 +8,8 @@ import pandas as pd
 from .minio_utils import download_object, upload_csv
 from .signal_readers import _output_filename
 from .biosignals import (
-    process_e4_bvp, process_e4_eda, process_e4_acc, process_e4_hr,
-    process_e4_ibi, process_e4_temp, process_brainwave, process_attention,
-    process_meditation, process_polar_hr,
+    process_e4_bvp, process_e4_eda, process_e4_acc, process_hr,
+    process_e4_ibi, process_e4_temp, process_brainwave, process_att_med,
 )
 from .audio_video_qc import process_kemocon_audio, process_kemocon_video
 
@@ -20,13 +19,13 @@ _KEMOCON_SIGNAL_PROCESSORS = {
     "E4_BVP":    process_e4_bvp,
     "E4_EDA":    process_e4_eda,
     "E4_ACC":    process_e4_acc,
-    "E4_HR":     process_e4_hr,
+    "E4_HR":     process_hr,
     "E4_IBI":    process_e4_ibi,
     "E4_TEMP":   process_e4_temp,
     "BrainWave": process_brainwave,
-    "Attention": process_attention,
-    "Meditation": process_meditation,
-    "Polar_HR":  process_polar_hr,
+    "Attention": process_att_med,
+    "Meditation": process_att_med,
+    "Polar_HR":  process_hr,
     "audio":     process_kemocon_audio,
     "video":     process_kemocon_video,
 }
@@ -62,6 +61,7 @@ def process_kemocon_entity(
     output_prefix: str,
     skip_video: bool = False,
     video_only: bool = False,
+    modality_filter: Optional[Set[str]] = None,
 ) -> None:
     """Process all signals for one K-EmoCon entity; upload one CSV per signal."""
     pid = _pid_from_entity_id(entity_id)
@@ -90,14 +90,22 @@ def process_kemocon_entity(
     for sig in expected_signals:
         signal_type = sig["signal_type"]
         modality = sig.get("modality", signal_type.lower())
-        if skip_video and signal_type == "video":
-            logger.info("[K-EmoCon] [%s] video — skipped (--skip-video)", entity_id)
-            continue
-        if video_only and signal_type != "video":
-            continue
+        if modality_filter is not None:
+            if signal_type.lower() not in modality_filter:
+                continue
+        else:
+            if skip_video and signal_type == "video":
+                logger.info("[K-EmoCon] [%s] video — skipped (--skip-video)", entity_id)
+                continue
+            if video_only and signal_type != "video":
+                continue
         processor = _KEMOCON_SIGNAL_PROCESSORS.get(signal_type)
         if processor is None:
             logger.warning("[K-EmoCon] [%s] No processor for signal '%s' — skipping", entity_id, signal_type)
+            continue
+
+        if (entity_id, entity_id, signal_type) in miss_skip:
+            logger.info("[K-EmoCon] [%s] %s → excluded (total_missing)", entity_id, signal_type)
             continue
 
         file_obj = None
@@ -125,17 +133,11 @@ def process_kemocon_entity(
                     file_data, entity_id, debate_start_s, debate_duration_s,
                     timestamp_col, ts_unit_ms, qf_cfg,
                 )
-            elif signal_type == "E4_HR":
+            elif signal_type in ("E4_HR", "Polar_HR"):
                 df = processor(
                     file_data, entity_id, debate_start_s, debate_duration_s,
                     timestamp_col, ts_unit_ms, sample_rate_hz, qf_cfg,
-                    bvp_df=computed_dfs.get("E4_BVP"),
-                )
-            elif signal_type == "Polar_HR":
-                df = processor(
-                    file_data, entity_id, debate_start_s, debate_duration_s,
-                    timestamp_col, ts_unit_ms, sample_rate_hz, qf_cfg,
-                    e4_hr_df=computed_dfs.get("E4_HR"),
+                    bvp_df=computed_dfs.get("E4_BVP") if signal_type == "E4_HR" else None,
                 )
             else:
                 df = processor(

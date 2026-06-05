@@ -37,6 +37,20 @@ def _worst_flag(flags: List[str]) -> Optional[str]:
     return max(valid, key=lambda f: _SEVERITY[f])
 
 
+def _majority_flag(flags: List[str]) -> Optional[str]:
+    valid = [f for f in flags if f in _SEVERITY]
+    if not valid:
+        return None
+    n = len(valid)
+    n_bad = sum(1 for f in valid if f == "BAD")
+    n_not_good = sum(1 for f in valid if f != "GOOD")
+    if n_bad > n / 2:
+        return "BAD"
+    if n_not_good > n / 2:
+        return "NOISY"
+    return "GOOD"
+
+
 def _signal_type_from_path(path: str) -> str:
     m = re.search(r'biosignal_(.*?)_quality_flags\.csv', path)
     if m:
@@ -105,7 +119,7 @@ def _build_eav_report(
                 continue
             trial_id = int(m.group(1)) + 1
             for win_id, grp in df.groupby("window_id"):
-                flag = _worst_flag(grp["quality_flag"].tolist())
+                flag = _majority_flag(grp["quality_flag"].tolist())
                 if flag:
                     sig_flags[signal_type][(trial_id, int(win_id))] = flag
         else:
