@@ -15,7 +15,7 @@ from .e4_physio import (
     extract_polar_hr_features,
     extract_temp_features,
 )
-from .eeg import extract_kemocon_brainwave
+from .eeg import extract_kemocon_brainwave, extract_kemocon_scalar_windowed
 from .video import extract_video_openface
 
 logger = logging.getLogger(__name__)
@@ -114,18 +114,41 @@ def process_kemocon_entity(
                 window_size_s,
                 debate_start_ms,
                 debate_end_ms,
-                attention_data=eeg_files.get("Attention.csv"),
-                meditation_data=eeg_files.get("Meditation.csv"),
             )
             if df is not None:
                 key = f"{output_prefix}/kemocon/eeg/{entity_id}_eeg_brainwave.parquet"
                 upload_parquet(minio_client, gold_bucket, key, df)
-                extra = [c for c in ("attention", "meditation") if c in df.columns]
-                logger.info(
-                    "[K-EmoCon] [%s] eeg → %s/%s%s",
-                    entity_id, gold_bucket, key,
-                    f" (+ {', '.join(extra)})" if extra else "",
-                )
+                logger.info("[K-EmoCon] [%s] eeg → %s/%s", entity_id, gold_bucket, key)
+
+        if "Attention.csv" in eeg_files:
+            df_att = extract_kemocon_scalar_windowed(
+                eeg_files["Attention.csv"], entity_id, "attention",
+                debate_start_ms, debate_end_ms,
+                window_size_s=hr_ibi_window_size_s, step_s=hr_ibi_step_s,
+            )
+            if df_att is not None:
+                key = f"{output_prefix}/kemocon/attention/{entity_id}_attention_features.parquet"
+                upload_parquet(minio_client, gold_bucket, key, df_att)
+                logger.info("[K-EmoCon] [%s] attention → %s/%s", entity_id, gold_bucket, key)
+            else:
+                logger.warning("[K-EmoCon] [%s] No attention features extracted", entity_id)
+        else:
+            logger.warning("[K-EmoCon] [%s] Attention.csv not found", entity_id)
+
+        if "Meditation.csv" in eeg_files:
+            df_med = extract_kemocon_scalar_windowed(
+                eeg_files["Meditation.csv"], entity_id, "meditation",
+                debate_start_ms, debate_end_ms,
+                window_size_s=hr_ibi_window_size_s, step_s=hr_ibi_step_s,
+            )
+            if df_med is not None:
+                key = f"{output_prefix}/kemocon/meditation/{entity_id}_meditation_features.parquet"
+                upload_parquet(minio_client, gold_bucket, key, df_med)
+                logger.info("[K-EmoCon] [%s] meditation → %s/%s", entity_id, gold_bucket, key)
+            else:
+                logger.warning("[K-EmoCon] [%s] No meditation features extracted", entity_id)
+        else:
+            logger.warning("[K-EmoCon] [%s] Meditation.csv not found", entity_id)
 
     # ── physio: BVP, ACC, HR, IBI, EDA, TEMP (Empatica E4) ──
     physio_modalities = modalities & {"bvp", "acc", "hr", "ibi", "eda", "temp"}

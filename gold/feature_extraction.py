@@ -60,7 +60,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--entity",
-        help="Process only this entity ID (e.g. S01 or p01). Applies to the selected dataset(s).",
+        help="Start processing from this entity ID (inclusive) to the end (e.g. S01 or p01). Applies to the selected dataset(s).",
     )
     parser.add_argument(
         "--test", action="store_true",
@@ -143,7 +143,11 @@ def main() -> None:
     if args.dataset in ("eav", "all"):
         entities = _list_entities(minio_client, silver_bucket, eav_silver_files_prefix)
         if args.entity:
-            entities = [e for e in entities if e == args.entity]
+            if args.entity in entities:
+                entities = entities[entities.index(args.entity):]
+            else:
+                logger.warning("[EAV] Entity '%s' not found — skipping EAV.", args.entity)
+                entities = []
         elif args.test:
             entities = entities[:1]
         logger.info("[EAV] %d entities%s", len(entities), " (test mode)" if args.test else "")
@@ -165,7 +169,11 @@ def main() -> None:
     if args.dataset in ("k-emocon", "all"):
         entities = _list_entities(minio_client, silver_bucket, kemocon_silver_files_prefix)
         if args.entity:
-            entities = [e for e in entities if e == args.entity]
+            if args.entity in entities:
+                entities = entities[entities.index(args.entity):]
+            else:
+                logger.warning("[K-EmoCon] Entity '%s' not found — skipping K-EmoCon.", args.entity)
+                entities = []
         elif args.test:
             entities = entities[:1]
         logger.info("[K-EmoCon] %d entities%s", len(entities), " (test mode)" if args.test else "")

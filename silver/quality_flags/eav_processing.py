@@ -23,6 +23,25 @@ def _max_run_length(x: np.ndarray) -> int:
     return int(run_lengths.max())
 
 
+def _compute_rNSR(x: np.ndarray, fs: float) -> float:
+    """Compute P(40-250 Hz)/P(1-40 Hz) on a HP-filtered (>1 Hz) copy of x."""
+    if len(x) < max(10, int(fs * 0.1)):
+        return float("nan")
+    try:
+        from scipy import signal as sp_signal
+        nyq = fs / 2.0
+        sos = sp_signal.butter(4, 1.0 / nyq, btype="high", output="sos")
+        x_hp = sp_signal.sosfiltfilt(sos, x)
+        freqs, psd = sp_signal.welch(x_hp, fs=fs, nperseg=min(len(x_hp), int(fs)))
+        P_noise = float(np.mean(psd[(freqs >= 40) & (freqs <= 250)]))
+        P_signal = float(np.mean(psd[(freqs >= 1) & (freqs < 40)]))
+        if P_signal == 0:
+            return float("nan")
+        return round(P_noise / P_signal, 6)
+    except Exception:
+        return float("nan")
+
+
 def process_eav_eeg(
     eeg_arr: Optional[np.ndarray],
     entity_id: str,
@@ -36,15 +55,20 @@ def process_eav_eeg(
     """Yield (session_id, DataFrame) for each EEG session.
 
     Each row is one (window, channel) pair with columns:
-    window_id, channel_id, samples, std, max_run, peak_to_peak, quality_flag, problem_flag.
+    window_id, channel_id, samples, std, max_run, peak_to_peak,
+    rNSR, rNSR_zscore, quality_flag, problem_flag.
 
     Analyses (applied per channel per window):
-      1. Incomplete window — n_samples < 400 → BAD/ARTIFACT; 400–499 → NOISY/ARTIFACT
-      2. Flat line         — std < 0.5 µV    → BAD/FLAT
-      3. Clipping          — max_run ≥ 5     → BAD/CLIPPING
-      4. Artifact          — peak_to_peak > 500 µV → NOISY/ARTIFACT
+      1. Incomplete window — n_samples < 80% expected → BAD/ARTIFACT; < 100% → NOISY/ARTIFACT
+      2. Flat line         — nan_present OR std < 0.5 µV → BAD/FLAT
+      3. High-freq noise   — rNSR > 0.5 AND |z| > 3 → BAD/ARTIFACT
+                             rNSR > 0.5 OR  |z| > 3 → NOISY/ARTIFACT
+                             (z-score per session: robust 1.4826×MAD normalization)
+      4. Clipping          — max_run ≥ 5 → BAD/CLIPPING
+      5. Amplitude         — peak_to_peak > 500 µV → BAD/ARTIFACT
 
     Priority: problem FLAT > CLIPPING > ARTIFACT > NONE; quality BAD > NOISY > GOOD.
+    rNSR z-score is computed across all windows × channels of the same session.
     """
     _q = {"GOOD": 0, "NOISY": 1, "BAD": 2}
 
@@ -80,70 +104,127 @@ def process_eav_eeg(
         n_timepoints, n_channels = eeg_slice.shape
         total_windows = math.ceil(n_timepoints / expected_per_window)
 
-        rows: List[Dict[str, Any]] = []
+        # Pass 1 — collect per-(window, channel) metrics; gather rNSR values for z-score
+        intermediate: List[Dict[str, Any]] = []
+        rNSR_all: List[float] = []
+
         for wid in range(total_windows):
             start_idx = wid * expected_per_window
             end_idx = min((wid + 1) * expected_per_window, n_timepoints)
             window_data = eeg_slice[start_idx:end_idx, :]
 
             for ch_idx in range(n_channels):
-                x = window_data[:, ch_idx]
-                x = x[np.isfinite(x)]
+                x_raw = window_data[:, ch_idx]
+                nan_present = bool(not np.all(np.isfinite(x_raw)))
+                x = x_raw[np.isfinite(x_raw)]
                 n_samples = len(x)
 
                 if n_samples < incomplete_bad_thr:
-                    a1_quality, a1_problem = "BAD", "ARTIFACT"
+                    a1 = ("BAD", "ARTIFACT")
                 elif n_samples < expected_per_window:
-                    a1_quality, a1_problem = "NOISY", "ARTIFACT"
+                    a1 = ("NOISY", "ARTIFACT")
                 else:
-                    a1_quality, a1_problem = "GOOD", "NONE"
+                    a1 = ("GOOD", "NONE")
 
                 if n_samples == 0:
-                    rows.append({
-                        "window_id": wid,
-                        "channel_id": ch_idx,
-                        "samples": 0,
-                        "std": float("nan"),
-                        "max_run": 0,
-                        "peak_to_peak": float("nan"),
-                        "quality_flag": "BAD",
-                        "problem_flag": "ARTIFACT",
+                    intermediate.append({
+                        "window_id": wid, "channel_id": ch_idx,
+                        "nan_present": nan_present, "samples": 0,
+                        "std": float("nan"), "max_run": 0,
+                        "peak_to_peak": float("nan"), "rNSR": float("nan"),
+                        "a1": a1,
                     })
                     continue
 
                 std_val = round(float(np.std(x)), 6)
                 max_run = _max_run_length(x)
                 peak_to_peak = round(float(np.max(x) - np.min(x)), 4)
+                rNSR = _compute_rNSR(x, declared_hz)
+                if not np.isnan(rNSR):
+                    rNSR_all.append(rNSR)
 
-                a2_quality = "BAD" if std_val < 0.5 else "GOOD"
-                a2_problem = "FLAT" if std_val < 0.5 else "NONE"
-
-                a3_quality = "BAD" if max_run >= 5 else "GOOD"
-                a3_problem = "CLIPPING" if max_run >= 5 else "NONE"
-
-                a4_quality = "NOISY" if peak_to_peak > 500 else "GOOD"
-                a4_problem = "ARTIFACT" if peak_to_peak > 500 else "NONE"
-
-                all_results = [
-                    (a1_quality, a1_problem),
-                    (a2_quality, a2_problem),
-                    (a3_quality, a3_problem),
-                    (a4_quality, a4_problem),
-                ]
-                quality_flag = max((r[0] for r in all_results), key=lambda q: _q[q])
-                problem_set = {r[1] for r in all_results}
-                problem_flag = next(p for p in ("FLAT", "CLIPPING", "ARTIFACT", "NONE") if p in problem_set)
-
-                rows.append({
-                    "window_id": wid,
-                    "channel_id": ch_idx,
-                    "samples": n_samples,
-                    "std": std_val,
-                    "max_run": max_run,
-                    "peak_to_peak": peak_to_peak,
-                    "quality_flag": quality_flag,
-                    "problem_flag": problem_flag,
+                intermediate.append({
+                    "window_id": wid, "channel_id": ch_idx,
+                    "nan_present": nan_present, "samples": n_samples,
+                    "std": std_val, "max_run": max_run,
+                    "peak_to_peak": peak_to_peak, "rNSR": rNSR,
+                    "a1": a1,
                 })
+
+        # rNSR z-score parameters — computed per session across all windows × channels
+        if len(rNSR_all) >= 2:
+            arr = np.array(rNSR_all)
+            median_rNSR = float(np.median(arr))
+            MAD = float(np.median(np.abs(arr - median_rNSR)))
+            rNSR_scale = 1.4826 * MAD if MAD > 0 else float("nan")
+        else:
+            median_rNSR = float("nan")
+            rNSR_scale = float("nan")
+
+        # Pass 2 — assign quality/problem flags
+        rows: List[Dict[str, Any]] = []
+        for m in intermediate:
+            a1_quality, a1_problem = m["a1"]
+            nan_present = m["nan_present"]
+            std_val = m["std"]
+            max_run = m["max_run"]
+            peak_to_peak = m["peak_to_peak"]
+            rNSR = m["rNSR"]
+
+            # Analysis 2: flat line — nan_present OR std < 0.5 µV
+            if nan_present or (not np.isnan(std_val) and std_val < 0.5):
+                a2_quality, a2_problem = "BAD", "FLAT"
+            else:
+                a2_quality, a2_problem = "GOOD", "NONE"
+
+            # Analysis 3: high-freq noise (rNSR with per-session robust z-score)
+            if not np.isnan(rNSR) and not np.isnan(rNSR_scale) and rNSR_scale > 0:
+                rNSR_zscore = round((rNSR - median_rNSR) / rNSR_scale, 4)
+            else:
+                rNSR_zscore = float("nan")
+
+            rNSR_over = not np.isnan(rNSR) and rNSR > 0.5
+            z_over = not np.isnan(rNSR_zscore) and abs(rNSR_zscore) > 3
+            if rNSR_over and z_over:
+                a3_quality, a3_problem = "BAD", "ARTIFACT"
+            elif rNSR_over or z_over:
+                a3_quality, a3_problem = "NOISY", "ARTIFACT"
+            else:
+                a3_quality, a3_problem = "GOOD", "NONE"
+
+            # Analysis 4: clipping
+            a4_quality = "BAD" if max_run >= 5 else "GOOD"
+            a4_problem = "CLIPPING" if max_run >= 5 else "NONE"
+
+            # Analysis 5: amplitude artifact
+            if not np.isnan(peak_to_peak) and peak_to_peak > 500:
+                a5_quality, a5_problem = "BAD", "ARTIFACT"
+            else:
+                a5_quality, a5_problem = "GOOD", "NONE"
+
+            all_results = [
+                (a1_quality, a1_problem),
+                (a2_quality, a2_problem),
+                (a3_quality, a3_problem),
+                (a4_quality, a4_problem),
+                (a5_quality, a5_problem),
+            ]
+            quality_flag = max((r[0] for r in all_results), key=lambda q: _q[q])
+            problem_set = {r[1] for r in all_results}
+            problem_flag = next(p for p in ("FLAT", "CLIPPING", "ARTIFACT", "NONE") if p in problem_set)
+
+            rows.append({
+                "window_id": m["window_id"],
+                "channel_id": m["channel_id"],
+                "samples": m["samples"],
+                "std": std_val,
+                "max_run": max_run,
+                "peak_to_peak": peak_to_peak,
+                "rNSR": rNSR,
+                "rNSR_zscore": rNSR_zscore,
+                "quality_flag": quality_flag,
+                "problem_flag": problem_flag,
+            })
 
         if rows:
             logger.info(
@@ -231,6 +312,7 @@ def process_eav_entity(
     output_prefix: str,
     skip_video: bool = False,
     video_only: bool = False,
+    modality_filter: Optional[Set[str]] = None,
 ) -> None:
     """Process all signals for one EAV entity; upload one CSV per signal."""
     eeg_label_suffix = eav_md_cfg.get("eeg_label_suffix", "_label")
@@ -264,11 +346,15 @@ def process_eav_entity(
         modality = sig.get("modality", signal_type.lower())
         ext = sig.get("ext", "")
 
-        if skip_video and signal_type == "video":
-            logger.info("[EAV] [%s] video — skipped (--skip-video)", entity_id)
-            continue
-        if video_only and signal_type != "video":
-            continue
+        if modality_filter is not None:
+            if signal_type.lower() not in modality_filter:
+                continue
+        else:
+            if skip_video and signal_type == "video":
+                logger.info("[EAV] [%s] video — skipped (--skip-video)", entity_id)
+                continue
+            if video_only and signal_type != "video":
+                continue
 
         try:
             if signal_type == "eeg" and ext == ".mat":

@@ -35,6 +35,7 @@ def run_quality_flags(
     test_mode: bool,
     skip_video: bool = False,
     video_only: bool = False,
+    modality_filter=None,
 ) -> None:
     qf_cfg = cfg.get("quality_flags", {})
     output_prefix = qf_cfg.get("output_prefix", "04_quality_flags").rstrip("/")
@@ -81,6 +82,7 @@ def run_quality_flags(
                         entity_objects[entity_id], subjects_map,
                         kemocon_md, qf_cfg, miss_lookup, miss_skip,
                         output_prefix, skip_video=skip_video, video_only=video_only,
+                        modality_filter=modality_filter,
                     )
                 except Exception as e:
                     logger.error("[K-EmoCon] [%s] Fatal error: %s", entity_id, e)
@@ -107,6 +109,7 @@ def run_quality_flags(
                         minio_client, silver_bucket, entity_id,
                         entity_objects[entity_id], eav_md, qf_cfg,
                         miss_lookup, miss_skip, output_prefix, skip_video=skip_video, video_only=video_only,
+                        modality_filter=modality_filter,
                     )
                 except Exception as e:
                     logger.error("[EAV] [%s] Fatal error: %s", entity_id, e)
@@ -131,6 +134,13 @@ def parse_args() -> argparse.Namespace:
         "--video-only", action="store_true",
         help="Process only video signals, skip all other modalities.",
     )
+    parser.add_argument(
+        "--modality", nargs="+", metavar="SIGNAL_TYPE",
+        help=(
+            "Process only the listed signal types, e.g. --modality eeg audio E4_BVP. "
+            "When given, overrides --skip-video and --video-only."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -145,12 +155,15 @@ def main() -> None:
 
     logger.info("Starting Silver — Step 04: Noise Detection & Quality Flags")
 
+    modality_filter = {m.lower() for m in args.modality} if args.modality else None
+
     run_quality_flags(
         minio_client, silver_bucket, cfg,
         dataset_filter=args.dataset,
         test_mode=args.test,
         skip_video=args.skip_video,
         video_only=args.video_only,
+        modality_filter=modality_filter,
     )
 
     logger.info("Quality Flags complete.")

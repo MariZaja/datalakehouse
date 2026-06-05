@@ -92,46 +92,17 @@ def extract_eeg_mne_features(
         return None
 
 
-def _read_kemocon_scalar_csv(
-    data: bytes,
-    debate_start_ms: float,
-    debate_end_ms: float,
-) -> Dict[int, float]:
-    """Parse a single-value K-EmoCon CSV (Attention.csv / Meditation.csv).
-
-    Returns a mapping sec_idx → value for the debate window.
-    The files have 'timestamp' (ms) and 'value' columns at 1 Hz.
-    """
-    try:
-        df = pd.read_csv(io.BytesIO(data))
-        if "timestamp" not in df.columns or "value" not in df.columns:
-            return {}
-        df = df[["timestamp", "value"]].copy()
-        df["timestamp"] = pd.to_numeric(df["timestamp"], errors="coerce")
-        df["value"] = pd.to_numeric(df["value"], errors="coerce")
-        df = df[(df["timestamp"] >= debate_start_ms) & (df["timestamp"] <= debate_end_ms)].dropna()
-        if df.empty:
-            return {}
-        df["sec_idx"] = ((df["timestamp"] - debate_start_ms) / 1000.0).apply(math.floor)
-        return df.groupby("sec_idx")["value"].mean().to_dict()
-    except Exception:
-        return {}
-
-
 def extract_kemocon_brainwave(
     data: bytes,
     entity_id: str,
     window_size_s: float = 0.3,
     debate_start_ms: Optional[float] = None,
     debate_end_ms: Optional[float] = None,
-    attention_data: Optional[bytes] = None,
-    meditation_data: Optional[bytes] = None,
 ) -> Optional[pd.DataFrame]:
-    """Map NeuroSky features from BrainWave/Attention/Meditation CSVs to fixed-length windows.
+    """Map NeuroSky band-power features from BrainWave.csv to fixed-length windows.
 
-    All signals are at 1 Hz. Each second's sample is broadcast to every window
-    whose centre falls within that second — matching the windowing convention used
-    in quality_flags. Returns one row per window.
+    Signal is at 1 Hz; each second's sample is broadcast to every window whose
+    centre falls within that second. Returns one row per window.
     """
     try:
         df = pd.read_csv(io.BytesIO(data))
@@ -150,28 +121,11 @@ def extract_kemocon_brainwave(
 
         debate_duration_s = (debate_end_ms - debate_start_ms) / 1000.0
         df["rel_ts_s"] = (df["timestamp"] - debate_start_ms) / 1000.0
-
-        # Build per-second lookup: floor(rel_ts_s) → band values (1 Hz → one sample/s)
         df["sec_idx"] = df["rel_ts_s"].apply(math.floor)
         sec_values: Dict[int, Dict[str, float]] = (
             df.groupby("sec_idx")[available].mean().to_dict("index")
         )
 
-        # Per-second lookups for attention and meditation (optional separate files)
-        attention_sec: Dict[int, float] = (
-            _read_kemocon_scalar_csv(attention_data, debate_start_ms, debate_end_ms)
-            if attention_data is not None else {}
-        )
-        meditation_sec: Dict[int, float] = (
-            _read_kemocon_scalar_csv(meditation_data, debate_start_ms, debate_end_ms)
-            if meditation_data is not None else {}
-        )
-        extra_cols = (
-            (["attention"] if attention_data is not None else [])
-            + (["meditation"] if meditation_data is not None else [])
-        )
-
-        # Generate all windows; broadcast the matching second's values by window centre
         total_windows = math.ceil(debate_duration_s / window_size_s)
         rows: List[Dict[str, Any]] = []
         for wid in range(1, total_windows + 1):
@@ -186,13 +140,75 @@ def extract_kemocon_brainwave(
             band_vals = sec_values.get(sec_idx, {})
             for band in available:
                 row[band] = band_vals.get(band, float("nan"))
-            if "attention" in extra_cols:
-                row["attention"] = attention_sec.get(sec_idx, float("nan"))
-            if "meditation" in extra_cols:
-                row["meditation"] = meditation_sec.get(sec_idx, float("nan"))
             rows.append(row)
 
         return pd.DataFrame(rows) if rows else None
     except Exception as e:
         logger.error("[K-EmoCon EEG] [%s] BrainWave extraction failed: %s", entity_id, e)
+        return None
+
+
+def extract_kemocon_scalar_windowed(
+    data: bytes,
+    entity_id: str,
+    signal_name: str,
+    debate_start_ms: Optional[float],
+    debate_end_ms: Optional[float],
+    window_size_s: float = 10.0,
+    step_s: float = 0.3,
+) -> Optional[pd.DataFrame]:
+    """Extract windowed mean from a 1 Hz scalar signal (Attention / Meditation).
+
+    Slides a window of `window_size_s` seconds with `step_s` step over the debate
+    window. The single feature per window is the mean of all samples that fall
+    within [window_start, window_end). Windows with no samples are skipped.
+    Returns one row per window: entity_id, window_id, window_start_s,
+    window_end_s, {signal_name}.
+    """
+    if debate_start_ms is None or debate_end_ms is None:
+        return None
+    try:
+        df = pd.read_csv(io.BytesIO(data))
+        if "timestamp" not in df.columns or "value" not in df.columns:
+            logger.warning(
+                "[K-EmoCon] [%s] %s.csv missing required columns", entity_id, signal_name,
+            )
+            return None
+        df = df[["timestamp", "value"]].copy()
+        df["timestamp"] = pd.to_numeric(df["timestamp"], errors="coerce")
+        df["value"] = pd.to_numeric(df["value"], errors="coerce")
+        df = df[
+            (df["timestamp"] >= debate_start_ms) & (df["timestamp"] <= debate_end_ms)
+        ].dropna()
+        if df.empty:
+            return None
+
+        rel_s = ((df["timestamp"] - debate_start_ms) / 1000.0).values
+        values = df["value"].values
+        debate_duration_s = (debate_end_ms - debate_start_ms) / 1000.0
+
+        rows: List[Dict[str, Any]] = []
+        wid = 1
+        t_start = 0.0
+        while t_start < debate_duration_s:
+            t_end = t_start + window_size_s
+            mask = (rel_s >= t_start) & (rel_s < t_end)
+            finite = values[mask]
+            finite = finite[np.isfinite(finite)]
+            if finite.size > 0:
+                rows.append({
+                    "entity_id": entity_id,
+                    "window_id": wid,
+                    "window_start_s": round(t_start, 3),
+                    "window_end_s": round(t_end, 3),
+                    signal_name: float(finite.mean()),
+                })
+            t_start = round(t_start + step_s, 9)
+            wid += 1
+
+        return pd.DataFrame(rows) if rows else None
+    except Exception as e:
+        logger.error(
+            "[K-EmoCon] [%s] %s windowed extraction failed: %s", entity_id, signal_name, e,
+        )
         return None
