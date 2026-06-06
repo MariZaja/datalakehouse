@@ -69,7 +69,7 @@ def process_kemocon_entity(
             )
             if df is not None:
                 df.insert(1, "entity_id", entity_id)
-                key = f"{output_prefix}/kemocon/audio/{entity_id}_audio_egemaps.parquet"
+                key = f"{output_prefix}/kemocon/{entity_id}/{entity_id}_audio.parquet"
                 upload_parquet(minio_client, gold_bucket, key, df)
                 logger.info("[K-EmoCon] [%s] audio → %s/%s", entity_id, gold_bucket, key)
             break  # one audio file per entity
@@ -89,7 +89,7 @@ def process_kemocon_entity(
             )
             if df is not None:
                 df.insert(1, "entity_id", entity_id)
-                key = f"{output_prefix}/kemocon/video/{entity_id}_video_openface.parquet"
+                key = f"{output_prefix}/kemocon/{entity_id}/{entity_id}_video.parquet"
                 upload_parquet(minio_client, gold_bucket, key, df)
                 logger.info("[K-EmoCon] [%s] video → %s/%s", entity_id, gold_bucket, key)
             break  # one video file per entity
@@ -116,7 +116,7 @@ def process_kemocon_entity(
                 debate_end_ms,
             )
             if df is not None:
-                key = f"{output_prefix}/kemocon/eeg/{entity_id}_eeg_brainwave.parquet"
+                key = f"{output_prefix}/kemocon/{entity_id}/{entity_id}_eeg.parquet"
                 upload_parquet(minio_client, gold_bucket, key, df)
                 logger.info("[K-EmoCon] [%s] eeg → %s/%s", entity_id, gold_bucket, key)
 
@@ -127,7 +127,7 @@ def process_kemocon_entity(
                 window_size_s=hr_ibi_window_size_s, step_s=hr_ibi_step_s,
             )
             if df_att is not None:
-                key = f"{output_prefix}/kemocon/attention/{entity_id}_attention_features.parquet"
+                key = f"{output_prefix}/kemocon/{entity_id}/{entity_id}_attention.parquet"
                 upload_parquet(minio_client, gold_bucket, key, df_att)
                 logger.info("[K-EmoCon] [%s] attention → %s/%s", entity_id, gold_bucket, key)
             else:
@@ -142,7 +142,7 @@ def process_kemocon_entity(
                 window_size_s=hr_ibi_window_size_s, step_s=hr_ibi_step_s,
             )
             if df_med is not None:
-                key = f"{output_prefix}/kemocon/meditation/{entity_id}_meditation_features.parquet"
+                key = f"{output_prefix}/kemocon/{entity_id}/{entity_id}_meditation.parquet"
                 upload_parquet(minio_client, gold_bucket, key, df_med)
                 logger.info("[K-EmoCon] [%s] meditation → %s/%s", entity_id, gold_bucket, key)
             else:
@@ -183,7 +183,7 @@ def process_kemocon_entity(
                     debate_start_ms=debate_start_ms, debate_end_ms=debate_end_ms,
                 )
                 if df is not None:
-                    key = f"{output_prefix}/kemocon/bvp/{entity_id}_bvp_features.parquet"
+                    key = f"{output_prefix}/kemocon/{entity_id}/{entity_id}_bvp.parquet"
                     upload_parquet(minio_client, gold_bucket, key, df)
                     logger.info("[K-EmoCon] [%s] bvp → %s/%s", entity_id, gold_bucket, key)
                 else:
@@ -198,7 +198,7 @@ def process_kemocon_entity(
                     debate_start_ms=debate_start_ms, debate_end_ms=debate_end_ms,
                 )
                 if df is not None:
-                    key = f"{output_prefix}/kemocon/acc/{entity_id}_acc_features.parquet"
+                    key = f"{output_prefix}/kemocon/{entity_id}/{entity_id}_acc.parquet"
                     upload_parquet(minio_client, gold_bucket, key, df)
                     logger.info("[K-EmoCon] [%s] acc → %s/%s", entity_id, gold_bucket, key)
                 else:
@@ -214,7 +214,7 @@ def process_kemocon_entity(
                     debate_start_ms=debate_start_ms, debate_end_ms=debate_end_ms,
                 )
                 if df is not None:
-                    key = f"{output_prefix}/kemocon/hr/{entity_id}_e4_hr_features.parquet"
+                    key = f"{output_prefix}/kemocon/{entity_id}/{entity_id}_e4_hr.parquet"
                     upload_parquet(minio_client, gold_bucket, key, df)
                     logger.info("[K-EmoCon] [%s] e4_hr → %s/%s", entity_id, gold_bucket, key)
                 else:
@@ -230,7 +230,7 @@ def process_kemocon_entity(
                     debate_start_ms=debate_start_ms, debate_end_ms=debate_end_ms,
                 )
                 if df is not None:
-                    key = f"{output_prefix}/kemocon/ibi/{entity_id}_ibi_features.parquet"
+                    key = f"{output_prefix}/kemocon/{entity_id}/{entity_id}_ibi.parquet"
                     upload_parquet(minio_client, gold_bucket, key, df)
                     logger.info("[K-EmoCon] [%s] ibi → %s/%s", entity_id, gold_bucket, key)
                 else:
@@ -246,7 +246,7 @@ def process_kemocon_entity(
                     debate_start_ms=debate_start_ms, debate_end_ms=debate_end_ms,
                 )
                 if df is not None:
-                    key = f"{output_prefix}/kemocon/eda/{entity_id}_eda_features.parquet"
+                    key = f"{output_prefix}/kemocon/{entity_id}/{entity_id}_eda.parquet"
                     upload_parquet(minio_client, gold_bucket, key, df)
                     logger.info("[K-EmoCon] [%s] eda → %s/%s", entity_id, gold_bucket, key)
                 else:
@@ -262,7 +262,7 @@ def process_kemocon_entity(
                     debate_start_ms=debate_start_ms, debate_end_ms=debate_end_ms,
                 )
                 if df is not None:
-                    key = f"{output_prefix}/kemocon/temp/{entity_id}_temp_features.parquet"
+                    key = f"{output_prefix}/kemocon/{entity_id}/{entity_id}_temp.parquet"
                     upload_parquet(minio_client, gold_bucket, key, df)
                     logger.info("[K-EmoCon] [%s] temp → %s/%s", entity_id, gold_bucket, key)
                 else:
@@ -283,7 +283,7 @@ def process_kemocon_entity(
                         debate_start_ms=debate_start_ms, debate_end_ms=debate_end_ms,
                     )
                     if df is not None:
-                        key = f"{output_prefix}/kemocon/hr/{entity_id}_polar_hr_features.parquet"
+                        key = f"{output_prefix}/kemocon/{entity_id}/{entity_id}_polar_hr.parquet"
                         upload_parquet(minio_client, gold_bucket, key, df)
                         logger.info("[K-EmoCon] [%s] polar_hr → %s/%s", entity_id, gold_bucket, key)
                     else:

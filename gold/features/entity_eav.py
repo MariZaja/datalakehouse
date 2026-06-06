@@ -56,7 +56,7 @@ def process_eav_entity(
 
         if audio_frames:
             combined = pd.concat(audio_frames, ignore_index=True)
-            key = f"{output_prefix}/eav/audio/{entity_id}_audio_egemaps.parquet"
+            key = f"{output_prefix}/eav/{entity_id}/{entity_id}_audio.parquet"
             upload_parquet(minio_client, gold_bucket, key, combined)
             logger.info("[EAV] [%s] audio → %d trials → %s/%s", entity_id, len(audio_frames), gold_bucket, key)
         else:
@@ -83,7 +83,7 @@ def process_eav_entity(
 
         if video_frames:
             combined = pd.concat(video_frames, ignore_index=True)
-            key = f"{output_prefix}/eav/video/{entity_id}_video_openface.parquet"
+            key = f"{output_prefix}/eav/{entity_id}/{entity_id}_video.parquet"
             upload_parquet(minio_client, gold_bucket, key, combined)
             logger.info("[EAV] [%s] video → %d trials → %s/%s", entity_id, len(video_frames), gold_bucket, key)
         else:
@@ -117,7 +117,7 @@ def process_eav_entity(
                     inst_axis=int(eeg_sig_cfg.get("instances_axis", 2)),
                 )
                 if df is not None:
-                    key = f"{output_prefix}/eav/eeg/{entity_id}_eeg_mne_features.parquet"
+                    key = f"{output_prefix}/eav/{entity_id}/{entity_id}_eeg.parquet"
                     upload_parquet(minio_client, gold_bucket, key, df)
                     logger.info("[EAV] [%s] eeg → %d trials → %s/%s", entity_id, len(df), gold_bucket, key)
             else:

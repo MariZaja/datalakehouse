@@ -70,6 +70,10 @@ def extract_eeg_mne_features(
                         return_as_df=True,
                     )
                     feat_df = feat_df.reset_index(drop=True)
+                    if isinstance(feat_df.columns, pd.MultiIndex):
+                        feat_df.columns = [
+                            "_".join(str(p) for p in col if p) for col in feat_df.columns
+                        ]
                     feat_df.insert(0, "entity_id", entity_id)
                     feat_df.insert(1, "trial_id", inst_idx)
                     feat_df.insert(2, "window_id", wid)

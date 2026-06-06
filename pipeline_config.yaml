@@ -331,8 +331,8 @@ missingness_detection:
 
 # Silver — Step 04: Noise Detection & Quality Flags
 quality_flags:
-  output_prefix: "04_quality_flags"
-  window_size_s: 0.3                    # seconds per window
+  output_prefix: "04_quality_flags_1s"
+  window_size_s: 1.0                    # seconds per window
 
   missing_fill_threshold: 0.5          # fill < this → MISSING
   degraded_quality_threshold: 0.8      # quality < this (fill OK) → DEGRADED
@@ -457,7 +457,7 @@ data_quality:
   datasets:
     eav:
       dataset_label: "EAV"
-      silver_files_prefix: "04_quality_flags/eav/files"
+      silver_files_prefix: "04_quality_flags_1s/eav/files"
       dataset_folder_name: "eav"
       flag_columns:
         audio: "audio_flag"
@@ -465,7 +465,7 @@ data_quality:
         video: "video_flag"
     k-emocon:
       dataset_label: "K-EmoCon"
-      silver_files_prefix: "04_quality_flags/k-emocon/files"
+      silver_files_prefix: "04_quality_flags_1s/k-emocon/files"
       dataset_folder_name: "k-emocon"
       flag_columns:
         audio: "audio_flag"

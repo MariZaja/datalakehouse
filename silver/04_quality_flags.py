@@ -38,7 +38,7 @@ def run_quality_flags(
     modality_filter=None,
 ) -> None:
     qf_cfg = cfg.get("quality_flags", {})
-    output_prefix = qf_cfg.get("output_prefix", "04_quality_flags").rstrip("/")
+    output_prefix = qf_cfg.get("output_prefix", "04_quality_flags_1s").rstrip("/")
     md_cfg = cfg.get("missingness_detection", {})
 
     miss_report_prefix = md_cfg.get("output_prefix", "03_missingness").rstrip("/")
