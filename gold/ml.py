@@ -60,8 +60,16 @@ class QualityAwareGaussianHMM:
         prior_counts = np.full(self.n_states, self.prior_smoothing)
         trans_counts = np.full((self.n_states, self.n_states), self.transition_smoothing)
 
-        vals: Dict[str, List[List[np.ndarray]]] = {m: [[] for _ in range(self.n_states)] for m in self.modalities}
-        wgts: Dict[str, List[List[np.ndarray]]] = {m: [[] for _ in range(self.n_states)] for m in self.modalities}
+        # Incremental weighted sufficient statistics: sum(w), sum(w*x), sum(w*x^2).
+        # Avoids accumulating all training arrays in memory simultaneously.
+        sum_w:  Dict[str, np.ndarray] = {}
+        sum_wx: Dict[str, np.ndarray] = {}
+        sum_wx2: Dict[str, np.ndarray] = {}
+        for m in self.modalities:
+            dim = self.modality_dims[m]
+            sum_w[m]   = np.zeros((self.n_states,))
+            sum_wx[m]  = np.zeros((self.n_states, dim))
+            sum_wx2[m] = np.zeros((self.n_states, dim))
 
         for seq in sequences:
             y = np.asarray(seq["y"], dtype=int)
@@ -72,15 +80,20 @@ class QualityAwareGaussianHMM:
 
             for m in self.modalities:
                 obs = np.asarray(seq[f"obs_{m}"], dtype=float)
-                q = np.asarray(seq[f"q_{m}"], dtype=float)
-                T = obs.shape[0]
+                q   = np.asarray(seq[f"q_{m}"],   dtype=float)
+                T   = obs.shape[0]
                 if q.shape != (T,):
                     raise ValueError(f"q_{m} shape mismatch: expected ({T},), got {q.shape}")
+                q = np.clip(q, 0.01, 1.0)
                 for state in range(self.n_states):
                     mask = y[:T] == state
-                    if np.any(mask):
-                        vals[m][state].append(obs[mask])
-                        wgts[m][state].append(q[mask])
+                    if not np.any(mask):
+                        continue
+                    w_s = q[mask]
+                    x_s = obs[mask]
+                    sum_w[m][state]   += w_s.sum()
+                    sum_wx[m][state]  += (w_s[:, None] * x_s).sum(axis=0)
+                    sum_wx2[m][state] += (w_s[:, None] * x_s ** 2).sum(axis=0)
 
         self.log_prior_ = np.log(prior_counts / prior_counts.sum())
         trans_probs = trans_counts / trans_counts.sum(axis=1, keepdims=True)
@@ -92,11 +105,13 @@ class QualityAwareGaussianHMM:
             vars_ = np.zeros((self.n_states, dim))
 
             for state in range(self.n_states):
-                if not vals[m][state]:
+                sw = sum_w[m][state]
+                if sw == 0.0:
                     raise ValueError(f"No training samples for state {state}, modality '{m}'")
-                X = np.vstack(vals[m][state])
-                w = np.concatenate(wgts[m][state])
-                means[state], vars_[state] = self._weighted_mean_var(X, w)
+                mean = sum_wx[m][state] / sw
+                var  = np.maximum(sum_wx2[m][state] / sw - mean ** 2, self.var_floor)
+                means[state] = mean
+                vars_[state] = var
 
             self.means_[m] = means
             self.vars_[m] = vars_

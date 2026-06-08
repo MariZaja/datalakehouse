@@ -1,13 +1,17 @@
 """Gold — Step 03: HMM Emotion Recognition Pipeline.
 
-Loads gold-layer features + data-quality scores for one EAV entity,
-aligns them, fits a QualityAwareGaussianHMM, and evaluates on a held-out trial split.
+Loads gold-layer features + data-quality scores for EAV entities,
+aligns them, fits a QualityAwareGaussianHMM per entity, and evaluates
+on a held-out trial split.
 
 Typical usage:
     python gold/hmm_pipeline.py --entity subject01 --modalities audio video eeg
 
     # Multi-seed comparison (quality vs. no-quality, seeds 0..49):
     python gold/hmm_pipeline.py --entity subject01 --n-seeds 50
+
+    # Run all entities sequentially:
+    python gold/hmm_pipeline.py --all-entities --modalities audio video eeg
 
 Data paths expected in the gold MinIO bucket:
     feature_extraction/eav/<entity>/<entity>_<modality>.parquet
@@ -204,15 +208,22 @@ def build_sequences(
     feat_cols: Dict[str, List[str]],
     emotion_to_idx: Dict[str, int],
     use_quality: bool = True,
+    use_trials: bool = True,
 ) -> List[Dict]:
-    """Group feature windows by trial into HMM sequence dicts.
+    """Group feature windows into HMM sequence dicts.
+
+    When use_trials=True (default): one sequence per trial, constant label.
+    When use_trials=False: one sequence for the whole entity, per-window labels.
 
     Each sequence dict contains:
         obs_<modality>: np.ndarray (T, dim)  — may contain NaN; imputed later
         q_<modality>:   np.ndarray (T,)
         y:              np.ndarray (T,) integer labels
-        trial_id:       int
+        trial_id:       int  (only present in trial mode)
     """
+    if not use_trials:
+        return _build_single_sequence(feat_dfs, feat_cols, emotion_to_idx, use_quality)
+
     # Only trials present in all modalities and with a valid emotion label.
     trial_sets = [set(df["trial_id"].dropna().unique()) for df in feat_dfs.values()]
     common_trials = sorted(trial_sets[0].intersection(*trial_sets[1:]))
@@ -234,17 +245,11 @@ def build_sequences(
         modality_data = {}
         skip = False
 
-        window_counts: Dict[str, int] = {}
-        first_starts: Dict[str, List[float]] = {}
-
         for m, df in feat_dfs.items():
             rows = df[df["trial_id"] == trial_id].sort_values("window_start_s").reset_index(drop=True)
             if rows.empty:
                 skip = True
                 break
-            window_counts[m] = len(rows)
-            if "window_start_s" in rows.columns:
-                first_starts[m] = rows["window_start_s"].iloc[:3].tolist()
             obs = rows[feat_cols[m]].values.astype(float)
             q = (
                 rows["quality_score"].values.astype(float)
@@ -257,17 +262,6 @@ def build_sequences(
 
         if skip:
             continue
-
-        # Modality sync diagnostics: warn if window counts differ across modalities.
-        if len(set(window_counts.values())) > 1:
-            logger.warning(
-                "Trial %s has unequal window counts across modalities: %s",
-                trial_id, window_counts,
-            )
-            for m, ts in first_starts.items():
-                logger.debug(
-                    "  Trial %s modality '%s' first window_start_s: %s", trial_id, m, ts
-                )
 
         # Align all modalities to the shortest window count.
         T = min(v[0].shape[0] for v in modality_data.values())
@@ -283,6 +277,50 @@ def build_sequences(
     return sequences
 
 
+def _build_single_sequence(
+    feat_dfs: Dict[str, pd.DataFrame],
+    feat_cols: Dict[str, List[str]],
+    emotion_to_idx: Dict[str, int],
+    use_quality: bool,
+) -> List[Dict]:
+    """Build one sequence from all windows sorted by time, with per-window labels.
+
+    Used for datasets without trial structure (e.g. K-EmoCon). Windows without
+    a recognised emotion label are dropped. Modalities are aligned by truncating
+    to the shortest valid window count (same logic as trial mode).
+    """
+    modality_data = {}
+    for m, df in feat_dfs.items():
+        valid_mask = df["window_emotion"].isin(emotion_to_idx)
+        df_valid = df[valid_mask].sort_values("window_start_s").reset_index(drop=True)
+        if df_valid.empty:
+            logger.error("Modality '%s': no windows with a valid emotion label.", m)
+            return []
+        modality_data[m] = df_valid
+
+    T = min(len(df) for df in modality_data.values())
+    if T == 0:
+        return []
+
+    logger.info("Single-sequence mode: T=%d windows (min across modalities).", T)
+
+    first_df = next(iter(modality_data.values()))
+    y = first_df["window_emotion"].iloc[:T].map(emotion_to_idx).values.astype(int)
+
+    seq: Dict = {"y": y}
+    for m, df in modality_data.items():
+        obs = df[feat_cols[m]].iloc[:T].values.astype(float)
+        if use_quality and "quality_score" in df.columns:
+            q = df["quality_score"].iloc[:T].values.astype(float)
+            q = np.nan_to_num(q, nan=_DEFAULT_QUALITY)
+        else:
+            q = np.ones(T, dtype=float)
+        seq[f"obs_{m}"] = obs
+        seq[f"q_{m}"] = q
+
+    return [seq]
+
+
 # ── Normalisation ─────────────────────────────────────────────────────────────
 
 def fit_imputers(
@@ -292,48 +330,49 @@ def fit_imputers(
     """Fit mean imputers on training sequences. Must be called before fit_scalers."""
     imputers = {}
     for m in modalities:
-        X = np.vstack([seq[f"obs_{m}"] for seq in sequences])
+        n_features = sequences[0][f"obs_{m}"].shape[1]
+        col_sum   = np.zeros(n_features)
+        col_count = np.zeros(n_features, dtype=np.int64)
+        for seq in sequences:
+            x = np.asarray(seq[f"obs_{m}"], dtype=float)
+            col_sum   += np.nansum(x, axis=0)
+            col_count += np.sum(~np.isnan(x), axis=0)
+        col_mean = col_sum / np.maximum(col_count, 1)
         imputer = SimpleImputer(strategy="mean")
-        imputer.fit(X)
+        imputer.fit(np.zeros((1, n_features)))  # initialise sklearn internals
+        imputer.statistics_ = col_mean
         imputers[m] = imputer
     return imputers
-
-
-def apply_imputers(
-    sequences: List[Dict],
-    imputers: Dict[str, SimpleImputer],
-) -> List[Dict]:
-    out = []
-    for seq in sequences:
-        new_seq = {k: v for k, v in seq.items()}
-        for m, imputer in imputers.items():
-            new_seq[f"obs_{m}"] = imputer.transform(seq[f"obs_{m}"])
-        out.append(new_seq)
-    return out
 
 
 def fit_scalers(
     sequences: List[Dict],
     modalities: List[str],
+    imputers: Dict[str, SimpleImputer],
 ) -> Dict[str, StandardScaler]:
+    """Fit scalers on imputed data without materialising the full imputed matrix."""
     scalers = {}
     for m in modalities:
-        X = np.vstack([seq[f"obs_{m}"] for seq in sequences])
         scaler = StandardScaler()
-        scaler.fit(X)
+        for seq in sequences:
+            x_imp = imputers[m].transform(seq[f"obs_{m}"])
+            scaler.partial_fit(x_imp)
         scalers[m] = scaler
     return scalers
 
 
-def apply_scalers(
+def apply_transforms(
     sequences: List[Dict],
+    imputers: Dict[str, SimpleImputer],
     scalers: Dict[str, StandardScaler],
 ) -> List[Dict]:
+    """Apply imputer then scaler in a single pass — one copy instead of two."""
     out = []
     for seq in sequences:
         new_seq = {k: v for k, v in seq.items()}
-        for m, scaler in scalers.items():
-            new_seq[f"obs_{m}"] = scaler.transform(seq[f"obs_{m}"])
+        for m in imputers:
+            x_imp = imputers[m].transform(seq[f"obs_{m}"])
+            new_seq[f"obs_{m}"] = scalers[m].transform(x_imp)
         out.append(new_seq)
     return out
 
@@ -366,6 +405,40 @@ def log_quality_stats(feat_dfs: Dict[str, pd.DataFrame], modalities: List[str]) 
 
 
 # ── Train / test split ────────────────────────────────────────────────────────
+
+def temporal_split(
+    sequences: List[Dict],
+    test_frac: float,
+) -> Tuple[List[Dict], List[Dict]]:
+    """Split each sequence temporally: first (1-test_frac) windows → train, rest → test.
+
+    Used instead of stratified_split when there is no trial structure.
+    """
+    if not sequences:
+        return [], []
+
+    train_seqs, test_seqs = [], []
+    for seq in sequences:
+        T = seq["y"].shape[0]
+        n_train = max(1, min(int(T * (1 - test_frac)), T - 1))
+
+        def _slice(s: Dict, start: int, end: int) -> Dict:
+            return {k: v[start:end] if isinstance(v, np.ndarray) else v for k, v in s.items()}
+
+        train_part = _slice(seq, 0, n_train)
+        test_part  = _slice(seq, n_train, T)
+        if train_part["y"].shape[0] > 0:
+            train_seqs.append(train_part)
+        if test_part["y"].shape[0] > 0:
+            test_seqs.append(test_part)
+
+    logger.info(
+        "Temporal split: %d train seq (%d windows total), %d test seq (%d windows total)",
+        len(train_seqs), sum(s["y"].shape[0] for s in train_seqs),
+        len(test_seqs),  sum(s["y"].shape[0] for s in test_seqs),
+    )
+    return train_seqs, test_seqs
+
 
 def stratified_split(
     sequences: List[Dict],
@@ -419,17 +492,28 @@ def evaluate(
     model: QualityAwareGaussianHMM,
     test_sequences: List[Dict],
     emotion_names: List[str],
+    per_window: bool = False,
 ) -> Dict:
+    """Evaluate the model on test sequences.
+
+    per_window=False (default): trial-level majority vote — one prediction per sequence.
+    per_window=True: one prediction per window (for datasets without trial structure).
+    """
     y_true, y_pred = [], []
 
     for seq in test_sequences:
         obs = {m: seq[f"obs_{m}"] for m in model.modalities}
         q = {m: seq[f"q_{m}"] for m in model.modalities}
         pred_path = model.predict(obs, q, return_state_names=False)
-        # Trial-level prediction: majority vote over per-window Viterbi states.
-        pred_trial = Counter(pred_path).most_common(1)[0][0]
-        y_true.append(int(seq["y"][0]))
-        y_pred.append(int(pred_trial))
+        if per_window:
+            for t, pred in enumerate(pred_path):
+                y_true.append(int(seq["y"][t]))
+                y_pred.append(int(pred))
+        else:
+            # Trial-level prediction: majority vote over per-window Viterbi states.
+            pred_trial = Counter(pred_path).most_common(1)[0][0]
+            y_true.append(int(seq["y"][0]))
+            y_pred.append(int(pred_trial))
 
     y_true_arr = np.array(y_true)
     y_pred_arr = np.array(y_pred)
@@ -464,15 +548,17 @@ def evaluate(
         "macro_f1": round(macro_f1, 4),
         "per_class": per_class,
         "confusion_matrix": cm.tolist(),
-        "n_test_trials": len(y_true),
+        "n_test": len(y_true),
+        "per_window": per_window,
     }
 
 
 def log_results(results: Dict, emotion_names: List[str]) -> None:
+    unit = "windows" if results.get("per_window") else "trials"
     logger.info("── Evaluation Results ──────────────────────────────────────")
     logger.info(
-        "Accuracy: %.4f  macro_F1: %.4f  (n=%d trials)",
-        results["accuracy"], results.get("macro_f1", 0.0), results["n_test_trials"],
+        "Accuracy: %.4f  macro_F1: %.4f  (n=%d %s)",
+        results["accuracy"], results.get("macro_f1", 0.0), results["n_test"], unit,
     )
     logger.info(
         "  %-12s %9s %9s %9s %9s",
@@ -534,20 +620,23 @@ def _build_and_remap(
     entity_id: str,
     use_quality: bool,
     emotion_names_full: List[str],
+    use_trials: bool = True,
 ) -> Optional[Tuple[List[Dict], List[str], int]]:
     """Build sequences and remap labels to a contiguous range. Returns (seqs, emotion_names, n_states)."""
     emotion_to_idx = {e: i for i, e in enumerate(emotion_names_full)}
-    sequences = build_sequences(feat_dfs, feat_cols_map, emotion_to_idx, use_quality=use_quality)
+    sequences = build_sequences(
+        feat_dfs, feat_cols_map, emotion_to_idx, use_quality=use_quality, use_trials=use_trials,
+    )
     if not sequences:
         logger.error("[%s] No sequences built (use_quality=%s).", entity_id, use_quality)
         return None
 
     emotion_names = list(emotion_names_full)
-    present_labels = sorted({int(seq["y"][0]) for seq in sequences})
+    present_labels = sorted({int(lbl) for seq in sequences for lbl in seq["y"]})
     if set(present_labels) != set(range(len(emotion_names))):
         missing = [emotion_names[i] for i in range(len(emotion_names)) if i not in present_labels]
         logger.warning(
-            "[%s] No labeled trials for %s — reducing to %d states.",
+            "[%s] No labeled sequences for %s — reducing to %d states.",
             entity_id, missing, len(present_labels),
         )
         remap = {old: new for new, old in enumerate(present_labels)}
@@ -568,21 +657,21 @@ def _fit_and_eval(
     noise_strength: float,
     seed: int,
     entity_id: str,
+    use_trials: bool = True,
 ) -> Optional[Dict]:
     """Split, impute (train-only), scale (train-only), fit HMM, evaluate. Returns results or None."""
-    train_seqs, test_seqs = stratified_split(sequences, test_frac, emotion_names, seed=seed)
+    if use_trials:
+        train_seqs, test_seqs = stratified_split(sequences, test_frac, emotion_names, seed=seed)
+    else:
+        train_seqs, test_seqs = temporal_split(sequences, test_frac)
     if not train_seqs or not test_seqs:
         logger.error("[%s] Train or test split is empty (seed=%d).", entity_id, seed)
         return None
 
-    # Impute missing feature values using training-set mean (fitted on train only).
     imputers = fit_imputers(train_seqs, modalities)
-    train_seqs = apply_imputers(train_seqs, imputers)
-    test_seqs = apply_imputers(test_seqs, imputers)
-
-    scalers = fit_scalers(train_seqs, modalities)
-    train_seqs = apply_scalers(train_seqs, scalers)
-    test_seqs = apply_scalers(test_seqs, scalers)
+    scalers  = fit_scalers(train_seqs, modalities, imputers)
+    train_seqs = apply_transforms(train_seqs, imputers, scalers)
+    test_seqs  = apply_transforms(test_seqs,  imputers, scalers)
 
     model = QualityAwareGaussianHMM(
         n_states=n_states,
@@ -592,7 +681,7 @@ def _fit_and_eval(
     )
     model.fit(train_seqs)
 
-    results = evaluate(model, test_seqs, emotion_names)
+    results = evaluate(model, test_seqs, emotion_names, per_window=not use_trials)
     log_results(results, emotion_names)
     return results
 
@@ -612,10 +701,11 @@ def run_entity(
     window_size: float,
     use_quality: bool,
     seed: int = 0,
+    use_trials: bool = True,
 ) -> Optional[Dict]:
     logger.info(
-        "── Entity: %s | Modalities: %s | States: %d | Quality-aware: %s | seed=%d",
-        entity_id, modalities, n_states, use_quality, seed,
+        "── Entity: %s | Modalities: %s | States: %d | Quality-aware: %s | Trials: %s | seed=%d",
+        entity_id, modalities, n_states, use_quality, use_trials, seed,
     )
 
     data = _load_entity_data(
@@ -627,7 +717,7 @@ def run_entity(
 
     log_quality_stats(feat_dfs, modalities)
 
-    built = _build_and_remap(feat_dfs, feat_cols_map, entity_id, use_quality, _EAV_EMOTIONS)
+    built = _build_and_remap(feat_dfs, feat_cols_map, entity_id, use_quality, _EAV_EMOTIONS, use_trials=use_trials)
     if built is None:
         return None
     sequences, emotion_names, n_states = built
@@ -635,7 +725,7 @@ def run_entity(
     modality_dims = {m: len(feat_cols_map[m]) for m in modalities}
     return _fit_and_eval(
         sequences, modality_dims, emotion_names, modalities,
-        n_states, test_frac, noise_strength, seed, entity_id,
+        n_states, test_frac, noise_strength, seed, entity_id, use_trials=use_trials,
     )
 
 
@@ -697,6 +787,7 @@ def _run_multi_seed(
     noise_strength: float,
     window_size: float,
     seeds: List[int],
+    use_trials: bool = True,
 ) -> None:
     """Load entity data once, then run split+train+eval for every seed and both quality conditions."""
     logger.info(
@@ -715,8 +806,8 @@ def _run_multi_seed(
     log_quality_stats(feat_dfs, modalities)
 
     # Build sequences for both quality conditions (cheap, no I/O).
-    built_q = _build_and_remap(feat_dfs, feat_cols_map, entity_id, True, _EAV_EMOTIONS)
-    built_no_q = _build_and_remap(feat_dfs, feat_cols_map, entity_id, False, _EAV_EMOTIONS)
+    built_q = _build_and_remap(feat_dfs, feat_cols_map, entity_id, True, _EAV_EMOTIONS, use_trials=use_trials)
+    built_no_q = _build_and_remap(feat_dfs, feat_cols_map, entity_id, False, _EAV_EMOTIONS, use_trials=use_trials)
     if built_q is None or built_no_q is None:
         return
 
@@ -731,11 +822,11 @@ def _run_multi_seed(
         logger.info("── Seed %d/%d (seed=%d) ──", i + 1, len(seeds), seed)
         r_q = _fit_and_eval(
             seqs_q, modality_dims, emotion_names_q, modalities,
-            n_states_q, test_frac, noise_strength, seed, entity_id,
+            n_states_q, test_frac, noise_strength, seed, entity_id, use_trials=use_trials,
         )
         r_no_q = _fit_and_eval(
             seqs_no_q, modality_dims, emotion_names_no_q, modalities,
-            n_states_no_q, test_frac, noise_strength, seed, entity_id,
+            n_states_no_q, test_frac, noise_strength, seed, entity_id, use_trials=use_trials,
         )
         if r_q is not None:
             results_q.append((seed, r_q))
@@ -774,7 +865,7 @@ def _log_aggregate_summary(all_results: Dict[str, Optional[Dict]], emotion_names
     for eid, r in sorted(ok.items()):
         logger.info(
             "  %-6s  acc=%.4f  macro_f1=%.4f  (n=%d)",
-            eid, r["accuracy"], r.get("macro_f1", 0.0), r["n_test_trials"],
+            eid, r["accuracy"], r.get("macro_f1", 0.0), r["n_test"],
         )
 
     logger.info("Mean per-class F1:")
@@ -828,6 +919,12 @@ def parse_args() -> argparse.Namespace:
         help="Run with seeds 0..n-seeds-1. When > 1, enables multi-seed comparison mode: "
              "both quality and no-quality conditions are evaluated for each seed and aggregated.",
     )
+    parser.add_argument(
+        "--window-mode", action="store_true",
+        help="Disable trial-level grouping. One sequence per entity with per-window labels; "
+             "data is split temporally instead of stratified by trial. "
+             "Use for datasets without trial structure (e.g. K-EmoCon).",
+    )
     return parser.parse_args()
 
 
@@ -848,6 +945,7 @@ def main() -> None:
     dq_prefix    = cfg.get("data_quality", {}).get("output_prefix", "data_quality")
 
     use_quality = not args.no_quality
+    use_trials = not args.window_mode
     multi_seed = args.n_seeds > 1
     seeds = list(range(args.n_seeds))
 
@@ -876,7 +974,7 @@ def main() -> None:
             )
         logger.info("Multi-seed mode: seeds=0..%d, noise_strength=%.1f", args.n_seeds - 1, args.noise_strength)
         for entity_id in entities:
-            _run_multi_seed(entity_id=entity_id, seeds=seeds, **common_kwargs)
+            _run_multi_seed(entity_id=entity_id, seeds=seeds, use_trials=use_trials, **common_kwargs)
     else:
         all_results: Dict[str, Optional[Dict]] = {}
         for entity_id in entities:
@@ -884,6 +982,7 @@ def main() -> None:
                 entity_id=entity_id,
                 use_quality=use_quality,
                 seed=args.seed,
+                use_trials=use_trials,
                 **common_kwargs,
             )
         if args.all_entities:
