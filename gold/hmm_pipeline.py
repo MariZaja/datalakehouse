@@ -1,22 +1,3 @@
-"""Gold — Step 03: HMM Emotion Recognition Pipeline.
-
-Loads gold-layer features + data-quality scores for EAV entities,
-aligns them, fits a QualityAwareGaussianHMM per entity, and evaluates
-on a held-out trial split.
-
-Typical usage:
-    python gold/hmm_pipeline.py --entity subject01 --modalities audio video eeg
-
-    # Multi-seed comparison (quality vs. no-quality, seeds 0..49):
-    python gold/hmm_pipeline.py --entity subject01 --n-seeds 50
-
-    # Run all entities sequentially:
-    python gold/hmm_pipeline.py --all-entities --modalities audio video eeg
-
-Data paths expected in the gold MinIO bucket:
-    feature_extraction/eav/<entity>/<entity>_<modality>.parquet
-    data_quality/eav/files/<entity>_data_quality.parquet
-"""
 import argparse
 import io
 import logging
@@ -29,6 +10,7 @@ import numpy as np
 import pandas as pd
 import yaml
 from dotenv import load_dotenv
+from sklearn.decomposition import PCA
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 
@@ -361,18 +343,43 @@ def fit_scalers(
     return scalers
 
 
+def fit_pcas(
+    sequences: List[Dict],
+    modalities: List[str],
+    n_components: int = 3,
+) -> Dict[str, PCA]:
+    """Fit one PCA per modality on (already imputed+scaled) training sequences."""
+    pcas: Dict[str, PCA] = {}
+    for m in modalities:
+        X = np.vstack([seq[f"obs_{m}"] for seq in sequences])
+        n_comp = min(n_components, X.shape[1], X.shape[0])
+        pca = PCA(n_components=n_comp)
+        pca.fit(X)
+        explained = float(pca.explained_variance_ratio_.sum())
+        logger.info(
+            "PCA [%s]: %d → %d components, %.1f%% variance explained",
+            m, X.shape[1], n_comp, 100.0 * explained,
+        )
+        pcas[m] = pca
+    return pcas
+
+
 def apply_transforms(
     sequences: List[Dict],
     imputers: Dict[str, SimpleImputer],
     scalers: Dict[str, StandardScaler],
+    pcas: Optional[Dict[str, PCA]] = None,
 ) -> List[Dict]:
-    """Apply imputer then scaler in a single pass — one copy instead of two."""
+    """Apply imputer → scaler → (optional) PCA in a single pass."""
     out = []
     for seq in sequences:
         new_seq = {k: v for k, v in seq.items()}
         for m in imputers:
-            x_imp = imputers[m].transform(seq[f"obs_{m}"])
-            new_seq[f"obs_{m}"] = scalers[m].transform(x_imp)
+            x = imputers[m].transform(seq[f"obs_{m}"])
+            x = scalers[m].transform(x)
+            if pcas and m in pcas:
+                x = pcas[m].transform(x)
+            new_seq[f"obs_{m}"] = x
         out.append(new_seq)
     return out
 
@@ -670,8 +677,11 @@ def _fit_and_eval(
 
     imputers = fit_imputers(train_seqs, modalities)
     scalers  = fit_scalers(train_seqs, modalities, imputers)
-    train_seqs = apply_transforms(train_seqs, imputers, scalers)
-    test_seqs  = apply_transforms(test_seqs,  imputers, scalers)
+    scaled_train = apply_transforms(train_seqs, imputers, scalers)
+    pcas     = fit_pcas(scaled_train, modalities, n_components=3)
+    train_seqs = apply_transforms(train_seqs, imputers, scalers, pcas)
+    test_seqs  = apply_transforms(test_seqs,  imputers, scalers, pcas)
+    modality_dims = {m: pcas[m].n_components_ for m in modalities}
 
     model = QualityAwareGaussianHMM(
         n_states=n_states,
