@@ -70,7 +70,7 @@ def process_e4_acc(
     window_size_s = float(qf_cfg.get("window_size_s", 1))
     sr = sample_rate_hz or 32.0
     expected_per_window = int(round(sr * window_size_s))
-    total_windows = math.ceil(debate_duration_s / window_size_s)
+    total_windows = math.floor(debate_duration_s / window_size_s)
 
     def _missing_row(wid: int, completeness: float = 0.0) -> Dict[str, Any]:
         return {
@@ -236,7 +236,7 @@ def process_e4_bvp(
     window_size_s = float(qf_cfg.get("window_size_s", 1))
     sr = sample_rate_hz or 64.0
     expected_per_window = int(round(sr * window_size_s))
-    total_windows = math.ceil(debate_duration_s / window_size_s)
+    total_windows = math.floor(debate_duration_s / window_size_s)
 
     def _missing_row(wid: int, completeness: float = 0.0) -> Dict[str, Any]:
         return {
@@ -382,7 +382,7 @@ def process_e4_eda(
     analytics_window_s = 30.0
     expected_per_analytics = 120  # 4 Hz × 30s
     use_pre_start = bool(qf_cfg.get("use_pre_start_as_warmup", True))
-    total_windows = math.ceil(debate_duration_s / window_size_s)
+    total_windows = math.floor(debate_duration_s / window_size_s)
 
     def _missing_row(wid: int, completeness: float = 0.0) -> Dict[str, Any]:
         return {
@@ -523,7 +523,7 @@ def process_hr(
     window_size_s = float(qf_cfg.get("window_size_s", 1))
     analytics_window_s = 10.0
     use_pre_start = bool(qf_cfg.get("use_pre_start_as_warmup", True))
-    total_windows = math.ceil(debate_duration_s / window_size_s)
+    total_windows = math.floor(debate_duration_s / window_size_s)
 
     bvp_flags: Dict[int, str] = (
         dict(zip(bvp_df["window_id"], bvp_df["quality_flag"]))
@@ -671,7 +671,7 @@ def process_e4_ibi(
 ) -> Optional[pd.DataFrame]:
     window_size_s = float(qf_cfg.get("window_size_s", 0.3))
     analytics_window_s = 10.0
-    total_windows = math.ceil(debate_duration_s / window_size_s)
+    total_windows = math.floor(debate_duration_s / window_size_s)
 
     def _missing_row(wid: int) -> Dict[str, Any]:
         return {
@@ -822,7 +822,7 @@ def process_e4_temp(
     analytics_window_s = 30.0
     expected_per_analytics = 120  # 4 Hz × 30s
     use_pre_start = bool(qf_cfg.get("use_pre_start_as_warmup", True))
-    total_windows = math.ceil(debate_duration_s / window_size_s)
+    total_windows = math.floor(debate_duration_s / window_size_s)
 
     def _missing_row(wid: int, completeness: float = 0.0) -> Dict[str, Any]:
         return {
@@ -932,8 +932,8 @@ def process_brainwave(
     channels = _BRAINWAVE_CHANNELS
     output_window_s = float(qf_cfg.get("window_size_s", 0.3))
     compute_window_s = max(1.0, output_window_s)  # min 1 s (SDK rate); grows with window_size_s
-    total_compute = math.ceil(debate_duration_s / compute_window_s)
-    total_output = math.ceil(debate_duration_s / output_window_s)
+    total_compute = math.floor(debate_duration_s / compute_window_s)
+    total_output = math.floor(debate_duration_s / output_window_s)
 
     def _bad_output_row(wid: int) -> Dict[str, Any]:
         return {
@@ -1119,7 +1119,7 @@ def process_att_med(
     window_size_s = float(qf_cfg.get("window_size_s", 0.3))
     analytics_window_s = max(_ATT_MED_ANALYTICS_WINDOW_S, window_size_s)
     expected_n = int(round(analytics_window_s))  # 1 Hz
-    total_windows = math.ceil(debate_duration_s / window_size_s)
+    total_windows = math.floor(debate_duration_s / window_size_s)
 
     def _missing_row(wid: int) -> Dict[str, Any]:
         return {

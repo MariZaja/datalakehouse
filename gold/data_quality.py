@@ -80,19 +80,10 @@ def _build_eav_report(
     qf_prefix: str,
     annotation_prefix: str,
     flag_columns: Dict[str, str],
-    n_trials: int = 200,
-    windows_per_trial: int = 20,
 ) -> pd.DataFrame:
-    skeleton = pd.DataFrame({
-        "trial_id": [t for t in range(1, n_trials + 1) for _ in range(windows_per_trial)],
-        "win": [w for _ in range(n_trials) for w in range(windows_per_trial)],
-    })
-    skeleton["window_id"] = skeleton.apply(
-        lambda r: f"{int(r.trial_id):03d}_{int(r.win):02d}", axis=1
-    )
-
-    # signal_type → {(trial_id, win_within_trial) → flag}
+    # signal_type → {(trial_id, win) → flag}
     sig_flags: Dict[str, Dict[Tuple[int, int], str]] = {}
+    all_keys: set = set()
     entity_prefix = f"{qf_prefix}/entity={entity_id}/"
 
     for obj in minio_client.list_objects(silver_bucket, prefix=entity_prefix, recursive=True):
@@ -119,18 +110,31 @@ def _build_eav_report(
                 continue
             trial_id = int(m.group(1)) + 1
             for win_id, grp in df.groupby("window_id"):
+                key = (trial_id, int(win_id))
+                all_keys.add(key)
                 flag = _majority_flag(grp["quality_flag"].tolist())
                 if flag:
-                    sig_flags[signal_type][(trial_id, int(win_id))] = flag
+                    sig_flags[signal_type][key] = flag
         else:
-            # audio/video: filename starts with trial_id number, windows indexed by window_start_s
+            # audio/video: filename starts with trial_id number
             m = re.match(r'^(\d+)', filename)
             if not m or "window_start_s" not in df.columns:
                 continue
             trial_id = int(m.group(1))
-            for _, row in df.iterrows():
-                win = int(row["window_start_s"])
-                sig_flags[signal_type][(trial_id, win)] = row["quality_flag"]
+            df_sorted = df.sort_values("window_start_s").reset_index(drop=True)
+            for wid, row in df_sorted.iterrows():
+                win = int(row["window_id"]) if "window_id" in df_sorted.columns else wid
+                key = (trial_id, win)
+                all_keys.add(key)
+                sig_flags[signal_type][key] = row["quality_flag"]
+
+    if not all_keys:
+        return pd.DataFrame()
+
+    skeleton = pd.DataFrame(sorted(all_keys), columns=["trial_id", "win"])
+    skeleton["window_id"] = skeleton.apply(
+        lambda r: f"{int(r.trial_id):03d}_{int(r.win):02d}", axis=1
+    )
 
     for signal_type, flags_dict in sig_flags.items():
         col_name = flag_columns.get(signal_type)
@@ -173,52 +177,56 @@ def _build_kemocon_report(
     flag_columns: Dict[str, str],
 ) -> Optional[pd.DataFrame]:
     entity_prefix = f"{qf_prefix}/entity={entity_id}/"
-
-    # signal_type → {window_start_s (int) → flag}
-    sig_flags: Dict[str, Dict[int, str]] = {}
+    frames: Dict[str, pd.DataFrame] = {}
 
     for obj in minio_client.list_objects(silver_bucket, prefix=entity_prefix, recursive=True):
         path = obj.object_name
         filename = path.split("/")[-1]
         if not filename.endswith("_quality_flags.csv"):
             continue
-
         signal_type = _signal_type_from_path(path)
-        if flag_columns.get(signal_type) is None:
-            continue
-
-        df = _load_csv(minio_client, silver_bucket, path)
-        if df is None or "quality_flag" not in df.columns or "window_start_s" not in df.columns:
-            continue
-
-        if signal_type not in sig_flags:
-            sig_flags[signal_type] = {}
-        for _, row in df.iterrows():
-            win = int(row["window_start_s"])
-            sig_flags[signal_type][win] = row["quality_flag"]
-
-    if not sig_flags:
-        return None
-
-    all_windows = sorted(set(w for flags in sig_flags.values() for w in flags))
-    skeleton = pd.DataFrame({"window_id": all_windows})
-
-    for signal_type, flags_dict in sig_flags.items():
         col_name = flag_columns.get(signal_type)
         if col_name is None:
             continue
-        skeleton[col_name] = skeleton["window_id"].map(flags_dict)
+        df = _load_csv(minio_client, silver_bucket, path)
+        if df is None or "quality_flag" not in df.columns or "window_id" not in df.columns:
+            continue
+        frames[col_name] = df[["window_id", "window_start_s", "window_end_s", "quality_flag"]].rename(
+            columns={"quality_flag": col_name}
+        )
+
+    if not frames:
+        return None
+
+    frame_list = list(frames.values())
+    skeleton = frame_list[0][["window_id", "window_start_s", "window_end_s"]].copy()
+    for cn, frame in frames.items():
+        skeleton = skeleton.merge(frame[["window_id", cn]], on="window_id", how="outer")
+    skeleton = skeleton.sort_values("window_id").reset_index(drop=True)
 
     annot_key = f"{annotation_prefix}/{entity_id}_annotation_quality.csv"
     annot_df = _load_csv(minio_client, silver_bucket, annot_key)
     if annot_df is not None and "seconds" in annot_df.columns and "valence_arousal_emotion" in annot_df.columns:
-        emotion_map = {
-            int(s): e
-            for s, e in zip(annot_df["seconds"], annot_df["valence_arousal_emotion"])
-        }
-        # annotation_quality uses 5s windows; map each 1s QF window to its 5s bucket
-        skeleton["window_emotion"] = skeleton["window_id"].map(
-            lambda s: emotion_map.get((s // 5) * 5)
+        annot = (
+            annot_df[["seconds", "valence_arousal_emotion"]]
+            .assign(seconds=lambda d: pd.to_numeric(d["seconds"], errors="coerce"))
+            .dropna(subset=["seconds"])
+            .astype({"seconds": float})
+            .sort_values("seconds")
+        )
+        skeleton["_mid"] = (skeleton["window_start_s"] + skeleton["window_end_s"]) / 2
+        skeleton = (
+            pd.merge_asof(
+                skeleton.sort_values("_mid"),
+                annot,
+                left_on="_mid",
+                right_on="seconds",
+                direction="backward",
+            )
+            .drop(columns=["seconds", "_mid"])
+            .rename(columns={"valence_arousal_emotion": "window_emotion"})
+            .sort_values("window_id")
+            .reset_index(drop=True)
         )
     else:
         if annot_df is None:
@@ -230,7 +238,6 @@ def _build_kemocon_report(
         if col_name in skeleton.columns:
             output_cols.append(col_name)
     output_cols.append("window_emotion")
-
     return skeleton[[c for c in output_cols if c in skeleton.columns]]
 
 
@@ -268,7 +275,7 @@ def main() -> None:
         dataset_folder_name = dataset_prop["dataset_folder_name"]
         flag_columns = dataset_prop["flag_columns"]
 
-        qf_prefix = f"{qf_output_prefix}/{dataset_folder_name}/files"
+        qf_prefix = dataset_prop.get("silver_files_prefix") or f"{qf_output_prefix}/{dataset_folder_name}/files"
         annotation_prefix = f"{aq_output_prefix}/{_ANNOT_SUBDIR.get(dataset_key, dataset_key)}"
 
         entity_objects = _group_objects_by_entity(minio_client, silver_bucket, qf_prefix)

@@ -102,7 +102,7 @@ def process_eav_eeg(
             eeg_slice = eeg_slice.reshape(-1, 1)
 
         n_timepoints, n_channels = eeg_slice.shape
-        total_windows = math.ceil(n_timepoints / expected_per_window)
+        total_windows = math.floor(n_timepoints / expected_per_window)
 
         # Pass 1 — collect per-(window, channel) metrics; gather rNSR values for z-score
         intermediate: List[Dict[str, Any]] = []
@@ -277,7 +277,7 @@ def process_eav_video(
     """Yield (source_object_name, df) for each trial MP4 file."""
     window_size_s = float(qf_cfg.get("window_size_s", 1.0))
     trial_duration_s = float(sig_cfg.get("trial_duration_s", 20.0))
-    total_windows = math.ceil(trial_duration_s / window_size_s)
+    total_windows = math.floor(trial_duration_s / window_size_s)
 
     for trial_id, obj in sorted(mp4_objs.items(), key=lambda kv: kv[0]):
         if (entity_id, trial_id, "video") in miss_skip:

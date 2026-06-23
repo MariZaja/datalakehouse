@@ -91,6 +91,11 @@ def main() -> None:
 
     datasets_cfg = cfg.get("datasets", {})
     eav_cfg = datasets_cfg.get("eav", {})
+    qf_eav_signals = (
+        cfg.get("quality_flags", {}).get("datasets", {}).get("eav", {}).get("expected_signals", [])
+    )
+    _eav_audio_sig = next((s for s in qf_eav_signals if s.get("signal_type") == "audio"), {})
+    eav_trial_duration_s = float(_eav_audio_sig.get("trial_duration_s", 20.0))
     kemocon_cfg = datasets_cfg.get("kemocon", {})
 
     eav_silver_files_prefix = (
@@ -160,6 +165,7 @@ def main() -> None:
                     smile=smile,
                     eeg_sig_cfg=eeg_sig_cfg,
                     window_size_s=window_size_s,
+                    trial_duration_s=eav_trial_duration_s,
                     openface_available=openface_available,
                     modalities=modalities,
                 )

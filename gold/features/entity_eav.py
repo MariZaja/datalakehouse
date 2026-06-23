@@ -28,6 +28,7 @@ def process_eav_entity(
     smile: Optional[Any],
     eeg_sig_cfg: Dict[str, Any],
     window_size_s: float = 0.3,
+    trial_duration_s: float = 20.0,
     openface_available: bool = True,
     modalities: Optional[Set[str]] = None,
 ) -> None:
@@ -47,7 +48,7 @@ def process_eav_entity(
             audio_bytes = download_object(minio_client, silver_bucket, obj.object_name)
             if audio_bytes is None:
                 continue
-            df = extract_audio_egemaps_windowed(audio_bytes, fname, smile, window_size_s)
+            df = extract_audio_egemaps_windowed(audio_bytes, fname, smile, window_size_s, max_duration_s=trial_duration_s)
             if df is not None:
                 df.insert(1, "entity_id", entity_id)
                 if trial_id is not None:
@@ -74,7 +75,7 @@ def process_eav_entity(
             video_bytes = download_object(minio_client, silver_bucket, obj.object_name)
             if video_bytes is None:
                 continue
-            df = extract_video_openface(video_bytes, fname, window_size_s=window_size_s)
+            df = extract_video_openface(video_bytes, fname, window_size_s=window_size_s, max_duration_s=trial_duration_s)
             if df is not None:
                 df.insert(1, "entity_id", entity_id)
                 if trial_id is not None:

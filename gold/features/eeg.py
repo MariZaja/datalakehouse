@@ -54,7 +54,7 @@ def extract_eeg_mne_features(
 
         window_n = max(1, int(round(sfreq * window_size_s)))
         n_tp = data.shape[2]
-        n_windows = math.ceil(n_tp / window_n)
+        n_windows = math.floor(n_tp / window_n)
 
         all_frames: List[pd.DataFrame] = []
         for inst_idx in range(n_use):
@@ -130,7 +130,7 @@ def extract_kemocon_brainwave(
             df.groupby("sec_idx")[available].mean().to_dict("index")
         )
 
-        total_windows = math.ceil(debate_duration_s / window_size_s)
+        total_windows = math.floor(debate_duration_s / window_size_s)
         rows: List[Dict[str, Any]] = []
         for wid in range(1, total_windows + 1):
             center_s = (wid - 1) * window_size_s + window_size_s / 2.0
