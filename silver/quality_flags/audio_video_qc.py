@@ -75,7 +75,7 @@ def _process_single_wav(
     window_n = int(round(sr * window_size_s))
     if window_n == 0:
         return None
-    total_windows = math.ceil(len(samples) / window_n)
+    total_windows = math.floor(len(samples) / window_n)
 
     rows: List[Dict[str, Any]] = []
     rms_values: List[float] = []
@@ -232,7 +232,7 @@ def process_kemocon_video(
     if file_data is None:
         return None
     window_size_s = float(qf_cfg.get("window_size_s", 1.0))
-    total_windows = math.ceil(debate_duration_s / window_size_s)
+    total_windows = math.floor(debate_duration_s / window_size_s)
     sd = read_video_signal(file_data)
     if sd is None:
         logger.warning("[K-EmoCon] [%s] video: could not decode file", entity_id)

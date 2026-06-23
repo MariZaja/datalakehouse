@@ -36,9 +36,10 @@ def run_quality_flags(
     skip_video: bool = False,
     video_only: bool = False,
     modality_filter=None,
+    start_from: str = None,
 ) -> None:
     qf_cfg = cfg.get("quality_flags", {})
-    output_prefix = qf_cfg.get("output_prefix", "04_quality_flags").rstrip("/")
+    output_prefix = qf_cfg.get("output_prefix", "04_quality_flags_1s").rstrip("/")
     md_cfg = cfg.get("missingness_detection", {})
 
     miss_report_prefix = md_cfg.get("output_prefix", "03_missingness").rstrip("/")
@@ -70,6 +71,9 @@ def run_quality_flags(
             logger.info("K-EmoCon entities: %d", len(entity_objects))
 
             entity_ids = sorted(entity_objects.keys())
+            if start_from:
+                entity_ids = [e for e in entity_ids if e >= start_from]
+                logger.info("Starting from entity %s (%d remaining)", start_from, len(entity_ids))
             if test_mode and entity_ids:
                 entity_ids = entity_ids[:1]
                 logger.info("TEST MODE: processing only %s", entity_ids[0])
@@ -98,6 +102,9 @@ def run_quality_flags(
             logger.info("EAV entities: %d", len(entity_objects))
 
             entity_ids = sorted(entity_objects.keys())
+            if start_from:
+                entity_ids = [e for e in entity_ids if e >= start_from]
+                logger.info("Starting from entity %s (%d remaining)", start_from, len(entity_ids))
             if test_mode and entity_ids:
                 entity_ids = entity_ids[:1]
                 logger.info("TEST MODE: processing only %s", entity_ids[0])
@@ -141,6 +148,10 @@ def parse_args() -> argparse.Namespace:
             "When given, overrides --skip-video and --video-only."
         ),
     )
+    parser.add_argument(
+        "--start-from", metavar="ENTITY_ID",
+        help="Skip all entities that sort before ENTITY_ID (inclusive resume point).",
+    )
     return parser.parse_args()
 
 
@@ -164,6 +175,7 @@ def main() -> None:
         skip_video=args.skip_video,
         video_only=args.video_only,
         modality_filter=modality_filter,
+        start_from=args.start_from,
     )
 
     logger.info("Quality Flags complete.")

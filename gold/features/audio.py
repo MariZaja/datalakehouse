@@ -32,7 +32,7 @@ def extract_audio_egemaps_windowed(
     window_n = int(round(sr * window_size_s))
     if window_n == 0 or len(samples) == 0:
         return None
-    n_windows = math.ceil(len(samples) / window_n)
+    n_windows = math.floor(len(samples) / window_n)
     frames: List[pd.DataFrame] = []
     for wid in range(1, n_windows + 1):
         start = (wid - 1) * window_n

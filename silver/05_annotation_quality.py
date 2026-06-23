@@ -274,8 +274,6 @@ def _valence_arousal_to_emotion(valence: float, arousal: float) -> Optional[str]
     """EAV mapping (scale centred at 0)."""
     if pd.isna(valence) or pd.isna(arousal):
         return None
-    if -1 < valence < 1 and -1 < arousal < 1:
-        return "Neutral"
     if valence >= 0 and arousal >= 0:
         return "Happiness"
     if valence <= 0 and arousal >= 0:
@@ -291,8 +289,6 @@ def _valence_arousal_to_emotion_kemocon(valence: float, arousal: float) -> Optio
     """K-EmoCon mapping (Likert scale 1-5, centred at 3)."""
     if pd.isna(valence) or pd.isna(arousal):
         return None
-    if 2.5 < valence < 3.5 and 2.5 < arousal < 3.5:
-        return "Neutral"
     if valence >= 3 and arousal >= 3:
         return "Happiness"
     if valence <= 3 and arousal >= 3:

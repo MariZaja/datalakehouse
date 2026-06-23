@@ -166,7 +166,7 @@ def extract_bvp_features(
         return None
 
     window_n = max(1, int(round(sfreq * window_size_s)))
-    n_windows = math.ceil(len(arr) / window_n)
+    n_windows = math.floor(len(arr) / window_n)
     rows: List[Dict[str, Any]] = []
     for wid in range(1, n_windows + 1):
         s = (wid - 1) * window_n
@@ -216,7 +216,7 @@ def extract_acc_features(
         return None
 
     window_n = max(1, int(round(sfreq * window_size_s)))
-    n_windows = math.ceil(len(arr) / window_n)
+    n_windows = math.floor(len(arr) / window_n)
     nan = float("nan")
     rows: List[Dict[str, Any]] = []
     for wid in range(1, n_windows + 1):

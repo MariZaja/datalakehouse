@@ -331,8 +331,8 @@ missingness_detection:
 
 # Silver — Step 04: Noise Detection & Quality Flags
 quality_flags:
-  output_prefix: "04_quality_flags"
-  window_size_s: 0.3                    # seconds per window
+  output_prefix: "04_quality_flags_1s"
+  window_size_s: 1.0                    # seconds per window
 
   missing_fill_threshold: 0.5          # fill < this → MISSING
   degraded_quality_threshold: 0.8      # quality < this (fill OK) → DEGRADED
@@ -444,12 +444,18 @@ annotation_quality:
 
 # Gold — Step 02: Feature Extraction
 feature_extraction:
-  output_prefix: "feature_extraction"
-  window_size_s: 0.3              # window length for audio/video/EEG/BVP/ACC (300 ms)
+  output_prefix: "feature_extraction_1s"
+  window_size_s: 1              # window length for audio/video/EEG/BVP/ACC (300 ms)
   hr_ibi_window_size_s: 10.0     # sliding window length for HR and IBI (10 s)
-  hr_ibi_step_s: 0.3             # sliding step for HR and IBI windows (300 ms)
+  hr_ibi_step_s: 1            # sliding step for HR and IBI windows (300 ms)
   eda_temp_window_size_s: 30.0   # sliding window length for EDA and TEMP (30 s)
-  eda_temp_step_s: 0.3           # sliding step for EDA and TEMP windows (300 ms)
+  eda_temp_step_s: 1           # sliding step for EDA and TEMP windows (300 ms)
+
+# Gold — Step 03: LDA Reduction
+lda_reduction:
+  output_prefix: "lda_reduction_1s"
+  feature_extraction_prefix: "feature_extraction_1s"
+  data_quality_prefix: "data_quality_1s"
 
 data_quality:
   output_prefix: "data_quality"

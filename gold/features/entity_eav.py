@@ -28,6 +28,7 @@ def process_eav_entity(
     smile: Optional[Any],
     eeg_sig_cfg: Dict[str, Any],
     window_size_s: float = 0.3,
+    trial_duration_s: float = 20.0,
     openface_available: bool = True,
     modalities: Optional[Set[str]] = None,
 ) -> None:
@@ -47,7 +48,7 @@ def process_eav_entity(
             audio_bytes = download_object(minio_client, silver_bucket, obj.object_name)
             if audio_bytes is None:
                 continue
-            df = extract_audio_egemaps_windowed(audio_bytes, fname, smile, window_size_s)
+            df = extract_audio_egemaps_windowed(audio_bytes, fname, smile, window_size_s, max_duration_s=trial_duration_s)
             if df is not None:
                 df.insert(1, "entity_id", entity_id)
                 if trial_id is not None:
@@ -56,7 +57,7 @@ def process_eav_entity(
 
         if audio_frames:
             combined = pd.concat(audio_frames, ignore_index=True)
-            key = f"{output_prefix}/eav/audio/{entity_id}_audio_egemaps.parquet"
+            key = f"{output_prefix}/eav/{entity_id}/{entity_id}_audio.parquet"
             upload_parquet(minio_client, gold_bucket, key, combined)
             logger.info("[EAV] [%s] audio → %d trials → %s/%s", entity_id, len(audio_frames), gold_bucket, key)
         else:
@@ -74,7 +75,7 @@ def process_eav_entity(
             video_bytes = download_object(minio_client, silver_bucket, obj.object_name)
             if video_bytes is None:
                 continue
-            df = extract_video_openface(video_bytes, fname, window_size_s=window_size_s)
+            df = extract_video_openface(video_bytes, fname, window_size_s=window_size_s, max_duration_s=trial_duration_s)
             if df is not None:
                 df.insert(1, "entity_id", entity_id)
                 if trial_id is not None:
@@ -83,7 +84,7 @@ def process_eav_entity(
 
         if video_frames:
             combined = pd.concat(video_frames, ignore_index=True)
-            key = f"{output_prefix}/eav/video/{entity_id}_video_openface.parquet"
+            key = f"{output_prefix}/eav/{entity_id}/{entity_id}_video.parquet"
             upload_parquet(minio_client, gold_bucket, key, combined)
             logger.info("[EAV] [%s] video → %d trials → %s/%s", entity_id, len(video_frames), gold_bucket, key)
         else:
@@ -117,7 +118,7 @@ def process_eav_entity(
                     inst_axis=int(eeg_sig_cfg.get("instances_axis", 2)),
                 )
                 if df is not None:
-                    key = f"{output_prefix}/eav/eeg/{entity_id}_eeg_mne_features.parquet"
+                    key = f"{output_prefix}/eav/{entity_id}/{entity_id}_eeg.parquet"
                     upload_parquet(minio_client, gold_bucket, key, df)
                     logger.info("[EAV] [%s] eeg → %d trials → %s/%s", entity_id, len(df), gold_bucket, key)
             else:
