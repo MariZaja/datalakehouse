@@ -1,11 +1,10 @@
 """Gold — Step 03c: K-Means Clustering on LDA Entity Means.
 
 Reads gold/lda_reduction/eav/entity_lda_means.csv and clusters entities
-using K-Means across all 36 LDA dimensions (audio, eeg, video × anger,
-sadness, happiness, calm × lda_1/2/3).
-Tries k=2..6, picks the k with the highest mean silhouette score.
+using K-Means across all 9 LDA dimensions (audio, eeg, video × lda_1/2/3).
+Tries k=2..41, picks the k with the highest mean silhouette score.
 
-With --per-modality: runs separate clusterings for each modality (12 dims each).
+With --per-modality: runs separate clusterings for each modality (3 dims each).
 
 Outputs a CSV with cluster assignments and a 2-D UMAP scatter plot.
 """
@@ -41,10 +40,9 @@ logger = logging.getLogger("gold_kmeans_clustering")
 
 _DEFAULT_CONFIG = str(Path(__file__).resolve().parent.parent / "pipeline_config.yaml")
 _MODALITIES = ("audio", "eeg", "video")
-_EMOTIONS = ("anger", "sadness", "happiness", "calm")
 _LDA_DIMS = ("lda_1", "lda_2", "lda_3")
-_FEATURE_COLS = [f"{m}_{e}_{d}" for m in _MODALITIES for e in _EMOTIONS for d in _LDA_DIMS]
-_MODALITY_COLS = {m: [f"{m}_{e}_{d}" for e in _EMOTIONS for d in _LDA_DIMS] for m in _MODALITIES}
+_FEATURE_COLS = [f"{m}_{d}" for m in _MODALITIES for d in _LDA_DIMS]
+_MODALITY_COLS = {m: [f"{m}_{d}" for d in _LDA_DIMS] for m in _MODALITIES}
 _K_RANGE = range(2, 42)
 
 

@@ -1,13 +1,13 @@
 """Gold — Step 03b: LDA Entity Mean Report.
 
 Reads per-window LDA parquets from gold/lda_reduction/eav and computes,
-for each entity, the mean of lda_1/lda_2/lda_3 per modality × emotion.
-Outputs a single CSV with one row per entity (36 feature columns):
+for each entity, the mean of lda_1/lda_2/lda_3 per modality (audio, eeg, video).
+Outputs a single CSV with one row per entity:
 
   entity_id,
-  audio_angry_lda_1, ..., audio_calm_lda_3,   (4 emotions × 3 = 12)
-  eeg_angry_lda_1,   ..., eeg_calm_lda_3,
-  video_angry_lda_1, ..., video_calm_lda_3
+  audio_lda_1, audio_lda_2, audio_lda_3,
+  eeg_lda_1,   eeg_lda_2,   eeg_lda_3,
+  video_lda_1, video_lda_2, video_lda_3
 """
 import argparse
 import io
@@ -36,8 +36,6 @@ logger = logging.getLogger("gold_lda_entity_means")
 
 _DEFAULT_CONFIG = str(Path(__file__).resolve().parent.parent / "pipeline_config.yaml")
 _MODALITIES = ("audio", "eeg", "video")
-# Must match window_emotion values produced by silver/05_annotation_quality.py
-_EMOTIONS = ("Anger", "Sadness", "Happiness", "Calm")
 _LDA_COLS = ("lda_1", "lda_2", "lda_3")
 
 
@@ -95,23 +93,13 @@ def main() -> None:
         for modality in _MODALITIES:
             key = f"{eav_prefix}/{entity_id}/{entity_id}_{modality}_lda.parquet"
             df = _load_parquet(minio_client, gold_bucket, key)
-            emotion_means = (
-                df.groupby("window_emotion")[list(_LDA_COLS)].mean()
-                if df is not None and "window_emotion" in df.columns
-                else None
-            )
-            for emotion in _EMOTIONS:
-                for col in _LDA_COLS:
-                    out_col = f"{modality}_{emotion.lower()}_{col}"
-                    if (
-                        emotion_means is not None
-                        and emotion in emotion_means.index
-                        and col in emotion_means.columns
-                    ):
-                        val = emotion_means.at[emotion, col]
-                        row[out_col] = 0 if pd.isna(val) else val
-                    else:
-                        row[out_col] = 0
+            for col in _LDA_COLS:
+                out_col = f"{modality}_{col}"
+                if df is not None and col in df.columns:
+                    val = df[col].mean()
+                    row[out_col] = 0 if pd.isna(val) else val
+                else:
+                    row[out_col] = 0
         rows.append(row)
         logger.info("[%s] done", entity_id)
 
@@ -120,7 +108,7 @@ def main() -> None:
         return
 
     col_order = ["entity_id"] + [
-        f"{m}_{e.lower()}_{c}" for m in _MODALITIES for e in _EMOTIONS for c in _LDA_COLS
+        f"{m}_{c}" for m in _MODALITIES for c in _LDA_COLS
     ]
     report = pd.DataFrame(rows)[col_order]
 
